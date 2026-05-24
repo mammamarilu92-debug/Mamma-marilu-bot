@@ -1212,28 +1212,11 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ ERRORE SEND_PHOTO: {e}")
             return
         
-        # 2. Invia il video (se creato correttamente) — in thread pool per non bloccare il bot
-        if sent_photo:
-            try:
-                logger.info("📽️ Creazione versione video (thread pool)...")
-                final_img_for_video = Image.open(BytesIO(output_buffer.getvalue()))
-                video_path = await loop.run_in_executor(
-                    thread_pool,
-                    lambda: create_video_from_image(final_img_for_video, duration_sec=2)
-                )
-                
-                if video_path and os.path.exists(video_path):
-                    with open(video_path, 'rb') as v:
-                        await msg.reply_video(
-                            video=v,
-                            duration=2,
-                            caption="🎞️ Versione video per Instagram",
-                            supports_streaming=True
-                        )
-                    os.remove(video_path)
-                    logger.info("✅ Video inviato e rimosso file temporaneo")
-            except Exception as e:
-                logger.error(f"❌ Errore creazione/invio video: {e}")
+        # Pulizia memoria dopo invio foto
+        import gc
+        output_buffer.close()
+        gc.collect()
+        logger.info("🧹 Memoria liberata dopo elaborazione")
 
         # Elimina status e messaggio originale
         try:
