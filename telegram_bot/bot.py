@@ -23,7 +23,7 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler, C
 from telegram import Update
 
 # Thread pool per operazioni sincrone (PIL, I/O)
-thread_pool = ThreadPoolExecutor(max_workers=4)
+thread_pool = ThreadPoolExecutor(max_workers=2)
 
 # Client HTTP condiviso (evita overhead TLS per ogni richiesta)
 http_client = None
@@ -70,26 +70,16 @@ processed_media_groups_queue = deque(maxlen=200)
 last_background_index = -1
 
 def load_backgrounds_cache():
-    """Carica gli sfondi E le immagini PIL in memoria all'avvio"""
+    """Carica solo i percorsi degli sfondi (non le immagini) per risparmiare RAM"""
     global cached_backgrounds, cached_background_images
     try:
         bg_files = glob.glob(os.path.join(ASSETS_DIR, "*.png")) + glob.glob(os.path.join(ASSETS_DIR, "*.jpg"))
         bg_files = [f for f in bg_files if not f.endswith('test_output.png') and '_inactive' not in os.path.basename(f)]
         cached_backgrounds = bg_files
-        
-        # Pre-carica immagini PIL in memoria, già ridimensionate a 1080x1920 RGB
-        TARGET_SIZE = (1080, 1920)
-        for bg_path in bg_files:
-            try:
-                img = Image.open(bg_path).convert('RGB')
-                if img.size != TARGET_SIZE:
-                    img = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
-                cached_background_images[bg_path] = img
-                logger.info(f"  ✅ Caricato: {os.path.basename(bg_path)}")
-            except Exception as e:
-                logger.warning(f"  ⚠️ Errore caricamento {bg_path}: {e}")
-        
-        logger.info(f"📁 Cache sfondi: {len(cached_background_images)} immagini in memoria")
+        cached_background_images = {}  # Non pre-caricare in RAM
+        for f in bg_files:
+            logger.info(f"  ✅ Trovato sfondo: {os.path.basename(f)}")
+        logger.info(f"📁 Sfondi trovati: {len(cached_backgrounds)} (caricati su richiesta)")
     except Exception as e:
         logger.error(f"❌ Errore cache sfondi: {e}")
 
