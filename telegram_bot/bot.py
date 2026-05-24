@@ -1200,41 +1200,23 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not final_caption:
             final_caption = "✨"
         
-        # Crea video 720p per Instagram Stories
+        # Invia foto
         import gc
         try:
-            logger.info("📽️ Creazione video 720p per Stories...")
-            final_img_for_video = Image.open(BytesIO(output_buffer.getvalue()))
+            buffer_to_send = BytesIO(output_buffer.getvalue())
+            buffer_to_send.seek(0)
             output_buffer.close()
             gc.collect()
 
-            loop = asyncio.get_event_loop()
-            video_path = await loop.run_in_executor(
-                thread_pool,
-                lambda: create_video_from_image(final_img_for_video, duration_sec=1)
+            logger.info("📸 Inviando immagine a Telegram...")
+            await msg.reply_photo(
+                photo=buffer_to_send,
+                caption=final_caption,
+                parse_mode="HTML"
             )
-            del final_img_for_video
-            gc.collect()
-
-            if video_path and os.path.exists(video_path):
-                with open(video_path, 'rb') as v:
-                    await msg.reply_video(
-                        video=v,
-                        duration=1,
-                        caption=final_caption,
-                        parse_mode="HTML",
-                        supports_streaming=True
-                    )
-                os.remove(video_path)
-                logger.info("✅✅✅ VIDEO INVIATO CON SUCCESSO! ✅✅✅")
-            else:
-                logger.error("❌ Video non creato, invio foto di fallback...")
-                buffer_fallback = BytesIO(output_buffer.getvalue()) if not output_buffer.closed else None
-                if buffer_fallback:
-                    buffer_fallback.seek(0)
-                    await msg.reply_photo(photo=buffer_fallback, caption=final_caption, parse_mode="HTML")
+            logger.info("✅✅✅ FOTO INVIATA CON SUCCESSO! ✅✅✅")
         except Exception as e:
-            logger.error(f"❌ ERRORE VIDEO: {e}")
+            logger.error(f"❌ ERRORE SEND_PHOTO: {e}")
             return
 
         # Elimina status e messaggio originale
