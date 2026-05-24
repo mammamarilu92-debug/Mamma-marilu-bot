@@ -737,15 +737,20 @@ async def set_brand(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Funzione per creare un video da un'immagine
-def create_video_from_image(image_pil, duration_sec=2):
-    """Crea un file MP4 da un'immagine PIL usando ffmpeg"""
-    import subprocess
+def create_video_from_image(image_pil, duration_sec=1):
+    """Crea un file MP4 da un'immagine PIL usando ffmpeg - 720p per risparmiare RAM"""
+    import subprocess, gc
     tmp_img = None
     tmp_video = None
     try:
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+        # Ridimensiona a 720x1280 per risparmiare RAM (formato verticale Stories)
+        img_resized = image_pil.resize((720, 1280), Image.Resampling.LANCZOS)
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
             tmp_img = f.name
-        image_pil.save(tmp_img, 'PNG')
+        img_resized.save(tmp_img, 'JPEG', quality=85)
+        del img_resized
+        gc.collect()
 
         with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as f:
             tmp_video = f.name
@@ -758,9 +763,9 @@ def create_video_from_image(image_pil, duration_sec=2):
             '-c:v', 'libx264',
             '-t', str(duration_sec),
             '-pix_fmt', 'yuv420p',
-            '-preset', 'fast',
+            '-preset', 'ultrafast',
             '-tune', 'stillimage',
-            '-crf', '18',
+            '-crf', '28',
             '-r', '25',
             tmp_video
         ], capture_output=True, text=True, timeout=60)
@@ -1195,28 +1200,42 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not final_caption:
             final_caption = "✨"
         
-        # Crea buffer PULITO per Telegram
-        buffer_to_send = BytesIO(output_buffer.getvalue())
-        buffer_to_send.seek(0)
-        
-        sent_photo = None
-        try:
-            logger.info("📸 Inviando immagine a Telegram...")
-            sent_photo = await msg.reply_photo(
-                photo=buffer_to_send,
-                caption=final_caption,
-                parse_mode="HTML"
-            )
-            logger.info("✅✅✅ FOTO INVIATA CON SUCCESSO! ✅✅✅")
-        except Exception as e:
-            logger.error(f"❌ ERRORE SEND_PHOTO: {e}")
-            return
-        
-        # Pulizia memoria dopo invio foto
+        # Crea video 720p per Instagram Stories
         import gc
-        output_buffer.close()
-        gc.collect()
-        logger.info("🧹 Memoria liberata dopo elaborazione")
+        try:
+            logger.info("📽️ Creazione video 720p per Stories...")
+            final_img_for_video = Image.open(BytesIO(output_buffer.getvalue()))
+            output_buffer.close()
+            gc.collect()
+
+            loop = asyncio.get_event_loop()
+            video_path = await loop.run_in_executor(
+                thread_pool,
+                lambda: create_video_from_image(final_img_for_video, duration_sec=1)
+            )
+            del final_img_for_video
+            gc.collect()
+
+            if video_path and os.path.exists(video_path):
+                with open(video_path, 'rb') as v:
+                    await msg.reply_video(
+                        video=v,
+                        duration=1,
+                        caption=final_caption,
+                        parse_mode="HTML",
+                        supports_streaming=True
+                    )
+                os.remove(video_path)
+                logger.info("✅✅✅ VIDEO INVIATO CON SUCCESSO! ✅✅✅")
+            else:
+                logger.error("❌ Video non creato, invio foto di fallback...")
+                buffer_fallback = BytesIO(output_buffer.getvalue()) if not output_buffer.closed else None
+                if buffer_fallback:
+                    buffer_fallback.seek(0)
+                    await msg.reply_photo(photo=buffer_fallback, caption=final_caption, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"❌ ERRORE VIDEO: {e}")
+            return
 
         # Elimina status e messaggio originale
         try:
