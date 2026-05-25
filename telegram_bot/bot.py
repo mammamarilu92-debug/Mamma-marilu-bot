@@ -957,34 +957,18 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         logger.info(f"Immagine ricevuta: {offer_img.size[0]}x{offer_img.size[1]}")
         
-        # Decido quale sfondo usare
+        # Decido quale sfondo usare — carica sempre dal disco (non tenere in RAM)
         background = None
-        
-        # 1. Controlla se c'è un brand salvato su file
-        if user_id not in user_brands:
-            # Carica dal file se esiste
-            user_brand_bytes = await loop.run_in_executor(thread_pool, lambda: load_user_brand(user_id))
-            if user_brand_bytes:
-                try:
-                    brand_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(user_brand_bytes)))
-                    user_brands[user_id] = brand_img
-                    logger.info(f"✅ Brand caricato da file per utente {user_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Errore caricamento brand da file: {e}")
-        
-        # 2. Usa il brand personalizzato se esiste su file (carica sempre dal disco, non da RAM)
-        if user_brand_bytes or user_id in user_brands:
-            if not user_brand_bytes and user_id in user_brands:
-                user_brand_bytes = await loop.run_in_executor(thread_pool, lambda: load_user_brand(user_id))
-            if user_brand_bytes:
-                try:
-                    background = Image.open(BytesIO(user_brand_bytes))
-                    logger.info(f"🎨 Usando brand personalizzato per utente {user_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Errore apertura brand: {e}")
-                    background = None
+        user_brand_bytes = await loop.run_in_executor(thread_pool, lambda: load_user_brand(user_id))
+        if user_brand_bytes:
+            try:
+                background = Image.open(BytesIO(user_brand_bytes))
+                user_brand_bytes = None  # libera subito
+                logger.info(f"🎨 Usando brand personalizzato per utente {user_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Errore apertura brand: {e}")
+                background = None
         if background is None:
-            # 3. Sfondo bianco puro
             background = Image.new('RGB', (1080, 1920), color=(255, 255, 255))
             logger.info("🤍 Sfondo bianco puro creato")
         
