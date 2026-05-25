@@ -972,11 +972,18 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.warning(f"⚠️ Errore caricamento brand da file: {e}")
         
-        # 2. Usa il brand personalizzato se esiste in memoria
-        if user_id in user_brands:
-            background = user_brands[user_id].copy()
-            logger.info(f"🎨 Usando brand personalizzato per utente {user_id}")
-        else:
+        # 2. Usa il brand personalizzato se esiste su file (carica sempre dal disco, non da RAM)
+        if user_brand_bytes or user_id in user_brands:
+            if not user_brand_bytes and user_id in user_brands:
+                user_brand_bytes = await loop.run_in_executor(thread_pool, lambda: load_user_brand(user_id))
+            if user_brand_bytes:
+                try:
+                    background = Image.open(BytesIO(user_brand_bytes))
+                    logger.info(f"🎨 Usando brand personalizzato per utente {user_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Errore apertura brand: {e}")
+                    background = None
+        if background is None:
             # 3. Sfondo bianco puro
             background = Image.new('RGB', (1080, 1920), color=(255, 255, 255))
             logger.info("🤍 Sfondo bianco puro creato")
@@ -1042,58 +1049,57 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Funzione per elaborare immagine in thread pool
         def process_image():
+            import gc as _gc
+            offer_img_resized = None
+            result = None
             try:
                 thread_log("🎨 [process_image] Inizio ridimensionamento...")
-                # Ridimensiona
                 offer_img_resized = offer_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 thread_log(f"✅ [process_image] Ridimensionata a {new_width}x{new_height}")
                 
-                # Centra il prodotto orizzontalmente; usa product_y calcolato fuori
                 x_offset = margin + (available_width - new_width) // 2
                 thread_log(f"✅ [process_image] Posizionata in ({x_offset}, {product_y})")
                 
-                # Incolla l'immagine sullo sfondo
                 thread_log("🔄 [process_image] Copiando background...")
                 result = background.copy()
                 thread_log(f"✅ [process_image] Background copiato, mode: {result.mode}")
                 
                 if offer_img_resized.mode == 'RGBA':
-                    thread_log("🔄 [process_image] Pasting RGBA...")
                     result.paste(offer_img_resized, (x_offset, product_y), offer_img_resized)
                 else:
-                    thread_log("🔄 [process_image] Pasting RGB...")
                     result.paste(offer_img_resized, (x_offset, product_y))
+                # Libera subito l'immagine ridimensionata
+                offer_img_resized.close()
+                offer_img_resized = None
+                _gc.collect()
                 thread_log("✅ [process_image] Immagine incollata")
                 
-                # Testo centrato nella zona inferiore dell'immagine (sotto prodotto, sopra pacco)
                 if _price or _savings or _percentage:
-                    thread_log(f"🎨 [process_image] Overlay testo zona {TEXT_ZONE_TOP}-{TEXT_ZONE_BOTTOM}...")
+                    thread_log(f"🎨 [process_image] Overlay testo...")
                     result = draw_price_overlay(result, _price, _savings, _percentage, _old_price,
                                                 text_zone_top=TEXT_ZONE_TOP, text_zone_bottom=TEXT_ZONE_BOTTOM)
-                    thread_log("✅ [process_image] Overlay aggiunto")
                 
-                # Scritta "link affiliato" in basso a destra
                 result = draw_affiliate_label(result, content_bottom=CONTENT_BOTTOM, inner_margin=60)
-                thread_log("✅ [process_image] Link affiliato aggiunto")
+                thread_log("✅ [process_image] Overlay aggiunto")
                 
-                # Salva il risultato in JPEG (Telegram lo salva meglio in galleria)
                 thread_log("🔄 [process_image] Salvando JPEG...")
                 output_buffer = BytesIO()
-                try:
-                    # Converti a RGB prima di salvare in JPEG
-                    if result.mode != 'RGB':
-                        result = result.convert('RGB')
-                    result.save(output_buffer, format='JPEG', quality=92)
-                    thread_log("✅ [process_image] JPEG salvato!")
-                except Exception as e:
-                    thread_log(f"❌ [process_image] Errore JPEG: {type(e).__name__}: {e}")
-                    raise
+                if result.mode != 'RGB':
+                    result = result.convert('RGB')
+                result.save(output_buffer, format='JPEG', quality=92)
+                # Libera il risultato subito dopo il salvataggio
+                result.close()
+                result = None
+                _gc.collect()
                 output_buffer.seek(0)
                 thread_log(f"✅ [process_image] Buffer OK: {len(output_buffer.getvalue())} bytes")
                 return output_buffer
             except Exception as e:
                 thread_log(f"❌ [process_image] CRASH: {type(e).__name__}: {str(e)[:200]}")
                 raise
+            finally:
+                if offer_img_resized: offer_img_resized.close()
+                if result: result.close()
         
         # Esegui in thread pool
         logger.info("📤 Inviando process_image al thread pool...")
@@ -1106,6 +1112,14 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("❌ Errore durante l'elaborazione dell'immagine. Riprova!")
             await status.delete()
             return
+        finally:
+            # Libera sempre offer_img e background dalla RAM
+            import gc
+            try: offer_img.close()
+            except: pass
+            try: background.close()
+            except: pass
+            gc.collect()
         
         logger.info(f"✅ Invio immagine brandizzata (buffer: {len(output_buffer.getvalue())} bytes)...")
         
