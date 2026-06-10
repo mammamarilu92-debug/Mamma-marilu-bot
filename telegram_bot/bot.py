@@ -22,8 +22,8 @@ from PIL import Image, ImageDraw, ImageFont
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ContextTypes
 from telegram import Update
 
-# Thread pool per operazioni sincrone (PIL, I/O)
-thread_pool = ThreadPoolExecutor(max_workers=2)
+# Thread pool per operazioni sincrone (PIL, I/O) — max 1 per non superare 512MB su Render
+thread_pool = ThreadPoolExecutor(max_workers=1)
 
 # Client HTTP condiviso (evita overhead TLS per ogni richiesta)
 http_client = None
@@ -438,8 +438,9 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
 def draw_affiliate_label(image: Image.Image, content_bottom: int = 1250, inner_margin: int = 95) -> Image.Image:
     """Aggiunge la scritta 'link affiliato' DENTRO la zona bianca, in basso a destra"""
     try:
-        img = image.copy().convert("RGBA")
-        width, height = img.size
+        if image.mode != 'RGB':
+            image = image.convert("RGB")
+        width, height = image.size
 
         fp = FONT_PATH if os.path.exists(FONT_PATH) else FONT_PATH_FALLBACK
         try:
@@ -448,7 +449,7 @@ def draw_affiliate_label(image: Image.Image, content_bottom: int = 1250, inner_m
             font = ImageFont.load_default()
 
         label = "link affiliato"
-        draw = ImageDraw.Draw(img)
+        draw = ImageDraw.Draw(image)
 
         bbox = draw.textbbox((0, 0), label, font=font)
         text_w = bbox[2] - bbox[0]
@@ -460,13 +461,13 @@ def draw_affiliate_label(image: Image.Image, content_bottom: int = 1250, inner_m
 
         # Ombra bianca sottile per staccarsi dallo sfondo
         for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
-            draw.text((x + dx, y + dy), label, font=font, fill=(255, 255, 255, 200))
+            draw.text((x + dx, y + dy), label, font=font, fill=(255, 255, 255))
 
         # Testo principale: nero
-        draw.text((x, y), label, font=font, fill=(0, 0, 0, 200))
+        draw.text((x, y), label, font=font, fill=(0, 0, 0))
 
         logger.info(f"✅ [Affiliate] 'link affiliato' dentro zona bianca ({x},{y})")
-        return img.convert("RGB")
+        return image
     except Exception as e:
         logger.error(f"❌ [Affiliate] Errore: {e}")
         return image
@@ -928,11 +929,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_success = await loop.run_in_executor(thread_pool, lambda: save_user_brand(user_id, offer_bytes))
             
             if save_success:
-                # Carica brand in memory per uso immediato
-                brand_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(offer_bytes)))
-                user_brands[user_id] = brand_img
-                
-                logger.info(f"✅ Background salvato per utente {user_id}: {brand_img.size[0]}x{brand_img.size[1]}")
+                logger.info(f"✅ Background salvato per utente {user_id}")
                 
                 await msg.reply_photo(
                     photo=BytesIO(offer_bytes),
@@ -1044,9 +1041,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 x_offset = margin + (available_width - new_width) // 2
                 thread_log(f"✅ [process_image] Posizionata in ({x_offset}, {product_y})")
                 
-                thread_log("🔄 [process_image] Copiando background...")
-                result = background.copy()
-                thread_log(f"✅ [process_image] Background copiato, mode: {result.mode}")
+                thread_log("🔄 [process_image] Usando background direttamente...")
+                result = background
+                thread_log(f"✅ [process_image] Background pronto, mode: {result.mode}")
                 
                 if offer_img_resized.mode == 'RGBA':
                     result.paste(offer_img_resized, (x_offset, product_y), offer_img_resized)
