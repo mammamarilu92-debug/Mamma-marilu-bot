@@ -23,6 +23,7 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler, C
 from telegram import Update
 
 # Thread pool per operazioni sincrone (PIL, I/O) — max 1 per non superare 512MB su Render
+# DEPLOY: 2026-06-15
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
 # Client HTTP condiviso (evita overhead TLS per ogni richiesta)
