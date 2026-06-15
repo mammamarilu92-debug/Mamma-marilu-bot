@@ -162,15 +162,22 @@ BACKGROUND_PATH = os.path.join(SCRIPT_DIR, "assets/background.png")
 
 # PostApp utilities
 def extract_amazon_link(text: str):
-    """Estrae il link Amazon dal testo"""
+    """Estrae il link Amazon dal testo (supporta link diretti e short: amzn.to, amzn.eu, a.co)"""
     if not text:
         return None
-    # Supporta sia link diretti che link con testo intorno
-    pattern = r'https?://(?:www\.)?amazon\.[a-z.]+/[^\s\n]+'
-    match = re.search(pattern, text)
+    # Link diretti Amazon (amazon.it, amazon.com, ecc.)
+    pattern_full = r'https?://(?:www\.)?amazon\.[a-z.]+/[^\s\n]+'
+    match = re.search(pattern_full, text)
     if match:
         link = match.group(0)
         logger.info(f"🔗 Link Amazon trovato: {link}")
+        return link
+    # Link corti Amazon (amzn.to, amzn.eu, amzn.com, a.co)
+    pattern_short = r'https?://(?:amzn\.to|amzn\.eu|amzn\.com|a\.co)/[^\s\n]+'
+    match = re.search(pattern_short, text)
+    if match:
+        link = match.group(0)
+        logger.info(f"🔗 Link Amazon corto trovato: {link}")
         return link
     return None
 
@@ -1108,17 +1115,21 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Estrai info PRIMA di inviare
         amazon_link = extract_amazon_link(offer_text)
         
+        def _is_amazon_url(u: str) -> bool:
+            u_low = u.lower()
+            return any(d in u_low for d in ("amazon.", "amzn.to", "amzn.eu", "amzn.com", "a.co/"))
+
         # Prova anche nelle entità del testo se presenti
         if not amazon_link and msg.entities:
             for ent in msg.entities:
-                if ent.type == "url":
+                if ent.type == "url" and msg.text:
                     link = msg.text[ent.offset : ent.offset + ent.length]
-                    if "amazon" in link.lower():
+                    if _is_amazon_url(link):
                         amazon_link = link
                         logger.info(f"🔗 Link Amazon trovato nelle entità testo: {amazon_link}")
                         break
-                elif ent.type == "text_link":
-                    if "amazon" in ent.url.lower():
+                elif ent.type == "text_link" and ent.url:
+                    if _is_amazon_url(ent.url):
                         amazon_link = ent.url
                         logger.info(f"🔗 Link Amazon trovato in text_link testo: {amazon_link}")
                         break
@@ -1126,17 +1137,23 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Prova anche nelle entità della caption
         if not amazon_link and msg.caption_entities:
             for ent in msg.caption_entities:
-                if ent.type == "url":
+                if ent.type == "url" and msg.caption:
                     link = msg.caption[ent.offset : ent.offset + ent.length]
-                    if "amazon" in link.lower():
+                    if _is_amazon_url(link):
                         amazon_link = link
                         logger.info(f"🔗 Link Amazon trovato nelle entità caption: {amazon_link}")
                         break
-                elif ent.type == "text_link":
-                    if "amazon" in ent.url.lower():
+                elif ent.type == "text_link" and ent.url:
+                    if _is_amazon_url(ent.url):
                         amazon_link = ent.url
                         logger.info(f"🔗 Link Amazon trovato in text_link caption: {amazon_link}")
                         break
+
+        # Controlla anche link_preview_options come ultima risorsa
+        if not amazon_link and msg.link_preview_options and msg.link_preview_options.url:
+            if _is_amazon_url(msg.link_preview_options.url):
+                amazon_link = msg.link_preview_options.url
+                logger.info(f"🔗 Link Amazon trovato in link_preview: {amazon_link}")
 
         brand_name = extract_brand_name(offer_text)
         price = extract_price(offer_text)
