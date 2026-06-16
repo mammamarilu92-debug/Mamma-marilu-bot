@@ -582,6 +582,20 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             logger.info(f"📡 [PostTap] Status: {response.status_code}")
             
             if response.status_code in [200, 201]:
+                # PostTap usa "rolling session": il cookie di sessione cambia ad ogni chiamata.
+                # Salviamo i cookie aggiornati dalla risposta per le chiamate successive.
+                new_cookies = dict(response.cookies)
+                if new_cookies:
+                    merged = {**cookies, **new_cookies}
+                    cookie_str = "; ".join(f"{k}={v}" for k, v in merged.items())
+                    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+                    try:
+                        with open(cookies_file, 'w') as f:
+                            f.write(cookie_str)
+                        logger.info(f"🍪 [PostTap] Cookie aggiornati e salvati: {list(new_cookies.keys())}")
+                    except Exception as ce:
+                        logger.warning(f"⚠️ [PostTap] Impossibile salvare i cookie: {ce}")
+
                 data = response.json()
                 logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
                 
@@ -958,7 +972,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Carica immagine in thread pool
         loop = asyncio.get_event_loop()
-        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(offer_bytes)))
+        _ob = offer_bytes
+        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(_ob)).copy())
+        del _ob  # libera offer_bytes dalla RAM subito (può essere svariati MB)
+        import gc as _gc_main; _gc_main.collect()
         
         logger.info(f"Immagine ricevuta: {offer_img.size[0]}x{offer_img.size[1]}")
         
@@ -1075,7 +1092,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output_buffer = BytesIO()
                 if result.mode != 'RGB':
                     result = result.convert('RGB')
-                result.save(output_buffer, format='JPEG', quality=92)
+                result.save(output_buffer, format='JPEG', quality=85)
                 # Libera il risultato subito dopo il salvataggio
                 result.close()
                 result = None
