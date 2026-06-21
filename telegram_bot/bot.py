@@ -514,22 +514,70 @@ def extract_brand_name(text: str, amazon_url: str = None):
 # Cache cookies PostTap
 _posttap_cookies = None
 
+GIST_FILENAME = "posttap_cookies.txt"
+
+def _load_cookies_from_gist() -> str:
+    """Scarica i cookie dal GitHub Gist privato (storage persistente)."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    gist_id = os.getenv('GIST_ID', '')
+    if not github_token or not gist_id:
+        return ''
+    try:
+        r = httpx.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            content = r.json().get('files', {}).get(GIST_FILENAME, {}).get('content', '')
+            if content:
+                logger.info("🍪 [Gist] Cookie PostTap caricati da GitHub Gist")
+                return content.strip()
+    except Exception as e:
+        logger.warning(f"⚠️ [Gist] Errore lettura: {e}")
+    return ''
+
+def save_cookies_to_gist(cookie_str: str):
+    """Salva i cookie aggiornati nel GitHub Gist (sopravvive ai riavvii del container)."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    gist_id = os.getenv('GIST_ID', '')
+    if not github_token or not gist_id:
+        logger.warning("⚠️ [Gist] GITHUB_TOKEN o GIST_ID non configurati — cookie NON persistenti")
+        return
+    try:
+        r = httpx.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
+            json={"files": {GIST_FILENAME: {"content": cookie_str}}},
+            timeout=10
+        )
+        if r.status_code == 200:
+            logger.info("✅ [Gist] Cookie salvati su GitHub Gist (persistenti)")
+        else:
+            logger.warning(f"⚠️ [Gist] Errore salvataggio: {r.status_code} {r.text[:100]}")
+    except Exception as e:
+        logger.warning(f"⚠️ [Gist] Eccezione salvataggio: {e}")
+
 def get_posttap_cookies():
-    """Carica cookies PostTap da file locale (priorità) o variabile env"""
-    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    """Carica cookies PostTap: Gist (persistente) > file locale > variabile env"""
     cookies_str = ''
 
-    # Priorità 1: file locale (rinnovato da renew_cookies.py)
-    if os.path.exists(cookies_file):
-        try:
-            with open(cookies_file, 'r') as f:
-                cookies_str = f.read().strip()
-            if cookies_str:
-                logger.info(f"🍪 Cookie PostTap caricati da file locale")
-        except Exception as e:
-            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
+    # Priorità 1: GitHub Gist (sopravvive ai riavvii Render)
+    cookies_str = _load_cookies_from_gist()
 
-    # Priorità 2: variabile d'ambiente
+    # Priorità 2: file locale (rinnovato da /rinnovalink)
+    if not cookies_str:
+        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+        if os.path.exists(cookies_file):
+            try:
+                with open(cookies_file, 'r') as f:
+                    cookies_str = f.read().strip()
+                if cookies_str:
+                    logger.info("🍪 Cookie PostTap caricati da file locale")
+            except Exception as e:
+                logger.warning(f"⚠️ Errore lettura file cookie: {e}")
+
+    # Priorità 3: variabile d'ambiente
     if not cookies_str:
         cookies_str = os.getenv('POSTTAP_COOKIES', '')
 
@@ -1460,6 +1508,8 @@ async def _run_renewal_login():
                 cookies_file = os.path.join(os.path.dirname(__file__), "posttap_cookies.txt")
                 with open(cookies_file, "w") as f:
                     f.write(cookie_str)
+                # Salva anche su GitHub Gist (persistente tra riavvii Render)
+                save_cookies_to_gist(cookie_str)
                 global _posttap_cookies
                 _posttap_cookies = None  # reset cache in memoria
                 logger.info(f"✅ Nuovi cookie PostTap salvati: {list(posttap_cookies.keys())}")
