@@ -718,27 +718,12 @@ def get_posttap_cookie_string() -> str:
 
 async def create_posttap_shortlink(url: str, name: str = "link"):
     """Trasforma un URL Amazon in shortlink con PostTap.
-    Se POSTTAP_PROXY_URL è configurato, usa il proxy Replit (IP garantito).
-    Altrimenti chiama PostTap direttamente."""
+    Chiama PostTap direttamente con i cookie dal file posttap_cookies.txt.
+    Nessuna dipendenza da Replit (il bot gira in autonomia su Render)."""
     try:
-        # ── PROXY (IP Replit, sempre funzionante) ──────────────────────────
-        proxy_url = os.getenv('POSTTAP_PROXY_URL', '').strip()
-        if proxy_url:
-            logger.info(f"🔗 [PostTap] Via proxy Replit: {proxy_url[:60]}")
-            try:
-                async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-                    resp = await client.post(proxy_url, json={"url": url, "name": name})
-                    logger.info(f"📡 [PostTap Proxy] Status: {resp.status_code}")
-                    if resp.status_code == 200:
-                        shortlink = resp.json().get("shortlink")
-                        if shortlink:
-                            logger.info(f"✅ [PostTap Proxy] Shortlink: {shortlink}")
-                            return shortlink
-            except Exception as proxy_err:
-                logger.warning(f"⚠️ [PostTap Proxy] Fallback diretto: {proxy_err}")
-            # Se proxy fallisce → continua con chiamata diretta
-
-        # ── CHIAMATA DIRETTA ───────────────────────────────────────────────
+        # ── CHIAMATA DIRETTA a PostTap (nessuna dipendenza da Replit) ──────
+        # PostTap NON blocca gli IP dei datacenter (testato: funziona da cloud).
+        # Il proxy Replit è stato rimosso perché Replit verrà disattivato.
         cookie_str = get_posttap_cookie_string()
         if not cookie_str:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
