@@ -719,16 +719,27 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
 
         logger.info(f"🔗 [PostTap] Shortlink per: {clean_url}")
 
-        async with httpx.AsyncClient(timeout=15, cookies=cookies, follow_redirects=True) as client:
+        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             payload = {"name": name, "url": clean_url, "tags": []}
             response = await client.post(
                 'https://creators.posttap.com/api/create-shortlink',
                 json=payload,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept': 'application/json',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
                     'Origin': 'https://creators.posttap.com',
-                    'Referer': 'https://creators.posttap.com/dashboard'
+                    'Referer': 'https://creators.posttap.com/dashboard',
+                    'Cookie': cookie_header,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    'sec-ch-ua': '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
                 }
             )
 
