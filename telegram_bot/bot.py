@@ -703,8 +703,28 @@ def get_posttap_cookies():
     return cookies
 
 async def create_posttap_shortlink(url: str, name: str = "link"):
-    """Trasforma un URL Amazon in shortlink con PostTap (client fresco per ogni chiamata)"""
+    """Trasforma un URL Amazon in shortlink con PostTap.
+    Se POSTTAP_PROXY_URL è configurato, usa il proxy su Replit (IP affidabile).
+    Altrimenti chiama PostTap direttamente."""
     try:
+        proxy_url = os.getenv('POSTTAP_PROXY_URL', '').strip()
+        if proxy_url:
+            logger.info(f"🔗 [PostTap] Usando proxy: {proxy_url}")
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                resp = await client.post(proxy_url, json={"url": url, "name": name})
+                logger.info(f"📡 [PostTap Proxy] Status: {resp.status_code}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    shortlink = data.get("shortlink")
+                    if shortlink:
+                        logger.info(f"✅ [PostTap Proxy] Shortlink: {shortlink}")
+                        return shortlink
+                    else:
+                        logger.warning(f"⚠️ [PostTap Proxy] Nessun shortlink: {data}")
+                else:
+                    logger.warning(f"⚠️ [PostTap Proxy] Errore: {resp.status_code} {resp.text[:200]}")
+            return url
+
         cookies = get_posttap_cookies()
         if not cookies:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
