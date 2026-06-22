@@ -722,37 +722,45 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
 
 async def cmd_rinnova_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /rinnovalink — rinnova i cookie PostTap via Telegram"""
-    msg = update.effective_message
-    chat_id = msg.chat_id
+    try:
+        msg = update.effective_message
+        chat_id = msg.chat_id
+        logger.info(f"🔑 [Rinnovo] Comando ricevuto da chat {chat_id}, phase attuale: {_renewal_state['phase']}")
 
-    if _renewal_state["phase"] in ("starting", "waiting_otp"):
-        await msg.reply_text("⏳ Rinnovo già in corso. Se aspetti il codice 2FA, mandamelo direttamente.")
-        return
+        if _renewal_state["phase"] in ("starting", "waiting_otp"):
+            await msg.reply_text("⏳ Rinnovo già in corso. Se stai aspettando il codice 2FA, mandamelo direttamente.")
+            return
 
-    # Reset stato
-    _renewal_state["phase"] = "idle"
-    _renewal_state["otp_event"].clear()
-    _renewal_state["otp_value"] = None
-    _renewal_state["final_cookies"] = None
-    _renewal_state["error"] = None
-    _renewal_state["chat_id"] = chat_id
+        # Reset stato
+        _renewal_state["phase"] = "idle"
+        _renewal_state["otp_event"].clear()
+        _renewal_state["otp_value"] = None
+        _renewal_state["final_cookies"] = None
+        _renewal_state["error"] = None
+        _renewal_state["chat_id"] = chat_id
 
-    email = os.environ.get("POSTTAP_EMAIL", "")
-    password = os.environ.get("POSTTAP_PASSWORD", "")
-    if not email or not password:
-        await msg.reply_text("❌ Email o password PostTap non configurati. Contattami.")
-        return
+        email = os.environ.get("POSTTAP_EMAIL", "")
+        password = os.environ.get("POSTTAP_PASSWORD", "")
+        if not email or not password:
+            await msg.reply_text("❌ POSTTAP_EMAIL o POSTTAP_PASSWORD non configurati su Render.")
+            return
 
-    status_msg = await msg.reply_text("🔄 Avvio login PostTap... attendi circa 30 secondi.")
-    _renewal_state["phase"] = "starting"
+        status_msg = await msg.reply_text("🔄 Avvio login PostTap... attendi 30-60 secondi.")
+        _renewal_state["phase"] = "starting"
 
-    # Avvia login in thread separato
-    t = threading.Thread(target=_renewal_thread, daemon=True)
-    t.start()
+        # Avvia login in thread separato
+        t = threading.Thread(target=_renewal_thread, daemon=True)
+        t.start()
 
-    # Aggiorna il messaggio di stato mentre il login procede
-    asyncio.create_task(_poll_renewal_state(context.bot, chat_id, status_msg.message_id))
-    logger.info(f"🔑 [Rinnovo] Avviato da chat {chat_id}")
+        asyncio.create_task(_poll_renewal_state(context.bot, chat_id, status_msg.message_id))
+        logger.info(f"🔑 [Rinnovo] Thread avviato per chat {chat_id}")
+
+    except Exception as e:
+        logger.error(f"❌ [Rinnovo] Errore critico nel comando: {e}", exc_info=True)
+        try:
+            await update.effective_message.reply_text(f"❌ Errore interno: {e}\n\nRiprova tra qualche minuto.")
+        except Exception:
+            pass
 
 
 async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
