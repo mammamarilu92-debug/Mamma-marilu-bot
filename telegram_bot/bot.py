@@ -854,6 +854,23 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
             return
 
 
+async def cmd_test_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /testlink — testa PostTap e mostra cosa succede"""
+    msg = update.effective_message
+    await msg.reply_text("🔍 Test PostTap in corso...")
+    try:
+        cookies = get_posttap_cookies()
+        cookie_keys = list(cookies.keys())
+        await msg.reply_text(f"🍪 Cookie trovati: {cookie_keys}")
+        
+        result = await create_posttap_shortlink("https://www.amazon.it/dp/B0TEST123", name="test")
+        if "amzlink" in result or "posttap" in result:
+            await msg.reply_text(f"✅ PostTap funziona!\n{result}")
+        else:
+            await msg.reply_text(f"❌ PostTap ha restituito l'URL originale\nCookies: {cookie_keys}")
+    except Exception as e:
+        await msg.reply_text(f"❌ Errore: {e}")
+
 async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /setcookie <stringa_cookie> — salva manualmente i cookie PostTap"""
     msg = update.effective_message
@@ -1452,6 +1469,7 @@ def build_app(token):
     app.add_handler(CommandHandler("brand", set_brand))
     app.add_handler(CommandHandler("rinnovalink", cmd_rinnova_cookies))
     app.add_handler(CommandHandler("setcookie", cmd_set_cookie))
+    app.add_handler(CommandHandler("testlink", cmd_test_link))
     app.add_handler(MessageHandler(filters.ALL, handler))
     return app
 
