@@ -886,10 +886,17 @@ async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cookies_file = os.path.join(os.path.dirname(__file__), "posttap_cookies.txt")
         with open(cookies_file, "w") as f:
             f.write(cookie_str)
-        global _posttap_cookies
-        _posttap_cookies = None  # reset cache
-        logger.info(f"✅ [Cookie] Salvati manualmente da Telegram: {cookie_str[:60]}...")
-        await msg.reply_text("✅ Cookie salvati! Funzioneranno dal prossimo link affiliato.")
+        global _posttap_cookies, _posttap_client
+        _posttap_cookies = None  # reset cache legacy
+        # Reset client persistente — forza rilettura cookie da file
+        if _posttap_client and not _posttap_client.is_closed:
+            await _posttap_client.aclose()
+        _posttap_client = None
+        # Salva anche su Gist (in background)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, save_cookies_to_gist, cookie_str)
+        logger.info(f"✅ [Cookie] Salvati manualmente + client resettato: {cookie_str[:60]}...")
+        await msg.reply_text("✅ Cookie salvati! Prova subito un link.")
     except Exception as e:
         logger.error(f"❌ [Cookie] Errore salvataggio: {e}")
         await msg.reply_text(f"❌ Errore nel salvataggio: {e}")
