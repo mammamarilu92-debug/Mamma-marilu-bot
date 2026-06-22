@@ -137,7 +137,8 @@ export const mastra = new Mastra({
               logger?.info("🔗 [PostTap Proxy] Richiesta shortlink", { url: amazonUrl });
 
               // Usa Python httpx (Node.js fetch non invia Cookie header correttamente)
-              const scriptPath = path.join(process.cwd(), "telegram_bot", "posttap_proxy.py");
+              // __dirname = .mastra/output → risali 2 livelli alla root del progetto
+              const scriptPath = path.resolve(__dirname, "../../telegram_bot/posttap_proxy.py");
               const safeUrl = amazonUrl.replace(/"/g, '\\"');
               const safeName = name.replace(/"/g, '\\"');
               let output: string;
