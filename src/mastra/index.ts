@@ -1,6 +1,7 @@
 import { Mastra } from "@mastra/core";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { MastraError } from "@mastra/core/error";
 import { PinoLogger } from "@mastra/loggers";
 import { LogLevel, MastraLogger } from "@mastra/core/logger";
@@ -135,49 +136,30 @@ export const mastra = new Mastra({
               const name = body.name || "link";
               logger?.info("🔗 [PostTap Proxy] Richiesta shortlink", { url: amazonUrl });
 
-              // Leggi cookie dal file locale (ha priorità sull'env var)
-              let cookiesStr = "";
+              // Usa Python httpx (Node.js fetch non invia Cookie header correttamente)
+              const scriptPath = path.join(process.cwd(), "telegram_bot", "posttap_proxy.py");
+              const safeUrl = amazonUrl.replace(/"/g, '\\"');
+              const safeName = name.replace(/"/g, '\\"');
+              let output: string;
               try {
-                const cookieFile = path.join(process.cwd(), "telegram_bot", "posttap_cookies.txt");
-                cookiesStr = fs.readFileSync(cookieFile, "utf8").trim();
-                logger?.info("🍪 [PostTap Proxy] Cookie caricati da file");
-              } catch (_) {}
-              if (!cookiesStr) {
-                cookiesStr = process.env.POSTTAP_COOKIES || "";
+                output = execSync(`python3 "${scriptPath}" "${safeUrl}" "${safeName}"`, {
+                  timeout: 20000,
+                  encoding: "utf8",
+                });
+              } catch (execErr: any) {
+                output = execErr.stdout || execErr.stderr || "{}";
               }
-              if (!cookiesStr) {
-                logger?.warn("⚠️ [PostTap Proxy] Nessun cookie configurato");
-                return c.json({ error: "no_cookies", shortlink: null }, 500);
+              logger?.info("📡 [PostTap Proxy] Python output", { output: output.trim() });
+
+              let result: any = {};
+              try { result = JSON.parse(output.trim()); } catch (_) {}
+
+              if (result.shortlink) {
+                logger?.info("✅ [PostTap Proxy] Shortlink creato", { shortlink: result.shortlink });
+                return c.json({ shortlink: result.shortlink });
               }
-
-              const cookieHeader = cookiesStr.trim();
-              const resp = await fetch("https://creators.posttap.com/api/create-shortlink", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Accept": "application/json, text/plain, */*",
-                  "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8",
-                  "Origin": "https://creators.posttap.com",
-                  "Referer": "https://creators.posttap.com/dashboard",
-                  "Cookie": cookieHeader,
-                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                },
-                body: JSON.stringify({ name, url: amazonUrl, tags: [] }),
-              });
-
-              logger?.info("📡 [PostTap Proxy] PostTap status", { status: resp.status });
-              const data = await resp.json() as any;
-
-              if (resp.ok || resp.status === 201) {
-                const obj = data?.object || {};
-                const shortlink = obj.shortlink || obj.shortLink || obj.short_url || data?.shortlink;
-                if (shortlink) {
-                  logger?.info("✅ [PostTap Proxy] Shortlink creato", { shortlink });
-                  return c.json({ shortlink });
-                }
-              }
-              logger?.warn("⚠️ [PostTap Proxy] Nessun shortlink", { status: resp.status, data });
-              return c.json({ error: "no_shortlink", status: resp.status, shortlink: null }, 502);
+              logger?.warn("⚠️ [PostTap Proxy] Nessun shortlink", { result });
+              return c.json({ error: result.error || "no_shortlink", shortlink: null }, 502);
             } catch (e: any) {
               logger?.error("❌ [PostTap Proxy] Eccezione", { error: e?.message });
               return c.json({ error: e?.message, shortlink: null }, 500);
