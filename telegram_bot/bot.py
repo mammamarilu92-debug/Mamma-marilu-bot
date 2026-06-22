@@ -443,6 +443,56 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     return img
 
 
+def draw_coupon_badge(image: Image.Image) -> Image.Image:
+    """Aggiunge un badge 'COUPON' rosso in alto a sinistra quando il post ha un coupon."""
+    try:
+        if image.mode != 'RGB':
+            image = image.convert("RGB")
+        draw = ImageDraw.Draw(image)
+        fp = FONT_PATH if os.path.exists(FONT_PATH) else FONT_PATH_FALLBACK
+        try:
+            font_big = ImageFont.truetype(fp, size=52)
+            font_small = ImageFont.truetype(fp, size=32)
+        except Exception:
+            font_big = ImageFont.load_default()
+            font_small = font_big
+
+        scissor = "✂"
+        label = "COUPON"
+
+        # Misure testo
+        bb1 = draw.textbbox((0, 0), scissor, font=font_big)
+        bb2 = draw.textbbox((0, 0), label, font=font_small)
+        w1 = bb1[2] - bb1[0]
+        w2 = bb2[2] - bb2[0]
+        h1 = bb1[3] - bb1[1]
+        h2 = bb2[3] - bb2[1]
+
+        pad_x, pad_y = 28, 18
+        badge_w = max(w1, w2) + pad_x * 2
+        badge_h = h1 + h2 + pad_y * 3
+
+        # Posizione: angolo in alto a sinistra con margine
+        x0, y0 = 40, 40
+        x1, y1 = x0 + badge_w, y0 + badge_h
+
+        # Rettangolo rosso con bordi arrotondati simulati
+        draw.rectangle([x0, y0, x1, y1], fill=(220, 30, 30))
+        # Bordo bianco
+        draw.rectangle([x0, y0, x1, y1], outline=(255, 255, 255), width=3)
+
+        # Forbici
+        draw.text((x0 + (badge_w - w1) // 2, y0 + pad_y), scissor, font=font_big, fill=(255, 255, 255))
+        # Scritta COUPON
+        draw.text((x0 + (badge_w - w2) // 2, y0 + pad_y + h1 + 6), label, font=font_small, fill=(255, 255, 255))
+
+        logger.info(f"✅ [Coupon] Badge aggiunto ({x0},{y0})")
+        return image
+    except Exception as e:
+        logger.error(f"❌ [Coupon] Errore badge: {e}")
+        return image
+
+
 def draw_affiliate_label(image: Image.Image, content_bottom: int = 1250, inner_margin: int = 95) -> Image.Image:
     """Aggiunge la scritta 'link affiliato' DENTRO la zona bianca, in basso a destra"""
     try:
@@ -721,12 +771,23 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
             return  # L'OTP arriverà come messaggio normale
 
         elif ph == "done":
-            short = (_renewal_state["final_cookies"] or "")[:80]
+            # Testa subito se i cookie funzionano davvero
+            test_result = "⏳ test in corso..."
+            try:
+                test_url = "https://www.amazon.it/dp/B0CX6FWGYS"
+                test_link = await create_posttap_shortlink(test_url, name="test-rinnovo")
+                if test_link and test_link != test_url:
+                    test_result = f"✅ Link testato: {test_link}"
+                else:
+                    test_result = "⚠️ Cookie salvati ma il test del link non ha funzionato — riprova /rinnovalink"
+            except Exception as te:
+                test_result = f"⚠️ Errore nel test: {te}"
+
             try:
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=status_msg_id,
-                    text=f"✅ Cookie rinnovati con successo!\nFunzioneranno dal prossimo link affiliato."
+                    text=f"✅ Login riuscito! Cookie rinnovati e salvati.\n\n{test_result}\n\nI prossimi post useranno il link affiliato automaticamente."
                 )
             except Exception:
                 pass
@@ -1100,7 +1161,15 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if _percentage:
                     logger.info(f"🧮 Percentuale calcolata automaticamente: {_percentage}")
         logger.info(f"💰 Prezzo: {_price}, Risparmio: {_savings}, %: {_percentage}, Vecchio: {_old_price}")
-        
+
+        # Rileva coupon nel testo del post
+        _has_coupon = bool(offer_text and any(
+            kw in offer_text.lower()
+            for kw in ("scansiona coupon", "sfoglia coupon", "applica coupon", "coupon", "clip coupon")
+        ))
+        if _has_coupon:
+            logger.info("🎟️ Coupon rilevato nel post — aggiunto badge")
+
         # Funzione per elaborare immagine in thread pool
         def process_image():
             import gc as _gc
@@ -1134,6 +1203,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                 text_zone_top=TEXT_ZONE_TOP, text_zone_bottom=TEXT_ZONE_BOTTOM)
                 
                 result = draw_affiliate_label(result, content_bottom=CONTENT_BOTTOM, inner_margin=60)
+                if _has_coupon:
+                    result = draw_coupon_badge(result)
                 thread_log("✅ [process_image] Overlay aggiunto")
                 
                 thread_log("🔄 [process_image] Salvando JPEG...")
