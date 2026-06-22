@@ -703,8 +703,28 @@ def get_posttap_cookies():
     return cookies
 
 async def create_posttap_shortlink(url: str, name: str = "link"):
-    """Trasforma un URL Amazon in shortlink con PostTap"""
+    """Trasforma un URL Amazon in shortlink con PostTap.
+    Se POSTTAP_PROXY_URL è configurato, usa il proxy Replit (IP garantito).
+    Altrimenti chiama PostTap direttamente."""
     try:
+        # ── PROXY (IP Replit, sempre funzionante) ──────────────────────────
+        proxy_url = os.getenv('POSTTAP_PROXY_URL', '').strip()
+        if proxy_url:
+            logger.info(f"🔗 [PostTap] Via proxy Replit: {proxy_url[:60]}")
+            try:
+                async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                    resp = await client.post(proxy_url, json={"url": url, "name": name})
+                    logger.info(f"📡 [PostTap Proxy] Status: {resp.status_code}")
+                    if resp.status_code == 200:
+                        shortlink = resp.json().get("shortlink")
+                        if shortlink:
+                            logger.info(f"✅ [PostTap Proxy] Shortlink: {shortlink}")
+                            return shortlink
+            except Exception as proxy_err:
+                logger.warning(f"⚠️ [PostTap Proxy] Fallback diretto: {proxy_err}")
+            # Se proxy fallisce → continua con chiamata diretta
+
+        # ── CHIAMATA DIRETTA ───────────────────────────────────────────────
         cookies = get_posttap_cookies()
         if not cookies:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
@@ -716,7 +736,7 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             if 'ref=' in url:
                 clean_url = re.sub(r'/ref=[^/?]+', '', clean_url)
 
-        logger.info(f"🔗 [PostTap] Shortlink per: {clean_url}")
+        logger.info(f"🔗 [PostTap] Shortlink diretto per: {clean_url}")
 
         async with httpx.AsyncClient(timeout=15, cookies=cookies, follow_redirects=True) as client:
             payload = {"name": name, "url": clean_url, "tags": []}
