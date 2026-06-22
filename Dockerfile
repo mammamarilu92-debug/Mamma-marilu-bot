@@ -6,11 +6,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV MALLOC_TRIM_THRESHOLD_=100000
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Cache bust: aggiorna questo per forzare ricopia dei file
-ARG CACHEBUST=20260622_2
+ARG CACHEBUST=20260622_3
 COPY telegram_bot/ ./telegram_bot/
 
 CMD ["python3", "telegram_bot/bot.py"]
