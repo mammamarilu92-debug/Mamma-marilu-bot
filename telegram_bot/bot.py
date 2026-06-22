@@ -23,7 +23,6 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler, C
 from telegram import Update
 
 # Thread pool per operazioni sincrone (PIL, I/O) — max 1 per non superare 512MB su Render
-# DEPLOY: 2026-06-15
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
 # Client HTTP condiviso (evita overhead TLS per ogni richiesta)
@@ -162,22 +161,15 @@ BACKGROUND_PATH = os.path.join(SCRIPT_DIR, "assets/background.png")
 
 # PostApp utilities
 def extract_amazon_link(text: str):
-    """Estrae il link Amazon dal testo (supporta link diretti e short: amzn.to, amzn.eu, a.co)"""
+    """Estrae il link Amazon dal testo"""
     if not text:
         return None
-    # Link diretti Amazon (amazon.it, amazon.com, ecc.)
-    pattern_full = r'https?://(?:www\.)?amazon\.[a-z.]+/[^\s\n]+'
-    match = re.search(pattern_full, text)
+    # Supporta sia link diretti che link con testo intorno
+    pattern = r'https?://(?:www\.)?amazon\.[a-z.]+/[^\s\n]+'
+    match = re.search(pattern, text)
     if match:
         link = match.group(0)
         logger.info(f"🔗 Link Amazon trovato: {link}")
-        return link
-    # Link corti Amazon (amzn.to, amzn.eu, amzn.com, a.co)
-    pattern_short = r'https?://(?:amzn\.to|amzn\.eu|amzn\.com|a\.co)/[^\s\n]+'
-    match = re.search(pattern_short, text)
-    if match:
-        link = match.group(0)
-        logger.info(f"🔗 Link Amazon corto trovato: {link}")
         return link
     return None
 
@@ -582,20 +574,6 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             logger.info(f"📡 [PostTap] Status: {response.status_code}")
             
             if response.status_code in [200, 201]:
-                # PostTap usa "rolling session": il cookie di sessione cambia ad ogni chiamata.
-                # Salviamo i cookie aggiornati dalla risposta per le chiamate successive.
-                new_cookies = dict(response.cookies)
-                if new_cookies:
-                    merged = {**cookies, **new_cookies}
-                    cookie_str = "; ".join(f"{k}={v}" for k, v in merged.items())
-                    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-                    try:
-                        with open(cookies_file, 'w') as f:
-                            f.write(cookie_str)
-                        logger.info(f"🍪 [PostTap] Cookie aggiornati e salvati: {list(new_cookies.keys())}")
-                    except Exception as ce:
-                        logger.warning(f"⚠️ [PostTap] Impossibile salvare i cookie: {ce}")
-
                 data = response.json()
                 logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
                 
@@ -972,10 +950,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Carica immagine in thread pool
         loop = asyncio.get_event_loop()
-        _ob = offer_bytes
-        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(_ob)).copy())
-        del _ob  # libera offer_bytes dalla RAM subito (può essere svariati MB)
-        import gc as _gc_main; _gc_main.collect()
+        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(offer_bytes)))
         
         logger.info(f"Immagine ricevuta: {offer_img.size[0]}x{offer_img.size[1]}")
         
@@ -1092,7 +1067,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output_buffer = BytesIO()
                 if result.mode != 'RGB':
                     result = result.convert('RGB')
-                result.save(output_buffer, format='JPEG', quality=85)
+                result.save(output_buffer, format='JPEG', quality=92)
                 # Libera il risultato subito dopo il salvataggio
                 result.close()
                 result = None
@@ -1132,21 +1107,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Estrai info PRIMA di inviare
         amazon_link = extract_amazon_link(offer_text)
         
-        def _is_amazon_url(u: str) -> bool:
-            u_low = u.lower()
-            return any(d in u_low for d in ("amazon.", "amzn.to", "amzn.eu", "amzn.com", "a.co/"))
-
         # Prova anche nelle entità del testo se presenti
         if not amazon_link and msg.entities:
             for ent in msg.entities:
-                if ent.type == "url" and msg.text:
+                if ent.type == "url":
                     link = msg.text[ent.offset : ent.offset + ent.length]
-                    if _is_amazon_url(link):
+                    if "amazon" in link.lower():
                         amazon_link = link
                         logger.info(f"🔗 Link Amazon trovato nelle entità testo: {amazon_link}")
                         break
-                elif ent.type == "text_link" and ent.url:
-                    if _is_amazon_url(ent.url):
+                elif ent.type == "text_link":
+                    if "amazon" in ent.url.lower():
                         amazon_link = ent.url
                         logger.info(f"🔗 Link Amazon trovato in text_link testo: {amazon_link}")
                         break
@@ -1154,23 +1125,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Prova anche nelle entità della caption
         if not amazon_link and msg.caption_entities:
             for ent in msg.caption_entities:
-                if ent.type == "url" and msg.caption:
+                if ent.type == "url":
                     link = msg.caption[ent.offset : ent.offset + ent.length]
-                    if _is_amazon_url(link):
+                    if "amazon" in link.lower():
                         amazon_link = link
                         logger.info(f"🔗 Link Amazon trovato nelle entità caption: {amazon_link}")
                         break
-                elif ent.type == "text_link" and ent.url:
-                    if _is_amazon_url(ent.url):
+                elif ent.type == "text_link":
+                    if "amazon" in ent.url.lower():
                         amazon_link = ent.url
                         logger.info(f"🔗 Link Amazon trovato in text_link caption: {amazon_link}")
                         break
-
-        # Controlla anche link_preview_options come ultima risorsa
-        if not amazon_link and msg.link_preview_options and msg.link_preview_options.url:
-            if _is_amazon_url(msg.link_preview_options.url):
-                amazon_link = msg.link_preview_options.url
-                logger.info(f"🔗 Link Amazon trovato in link_preview: {amazon_link}")
 
         brand_name = extract_brand_name(offer_text)
         price = extract_price(offer_text)
