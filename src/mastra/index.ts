@@ -1,4 +1,6 @@
 import { Mastra } from "@mastra/core";
+import * as fs from "fs";
+import * as path from "path";
 import { MastraError } from "@mastra/core/error";
 import { PinoLogger } from "@mastra/loggers";
 import { LogLevel, MastraLogger } from "@mastra/core/logger";
@@ -133,9 +135,18 @@ export const mastra = new Mastra({
               const name = body.name || "link";
               logger?.info("🔗 [PostTap Proxy] Richiesta shortlink", { url: amazonUrl });
 
-              const cookiesStr = process.env.POSTTAP_COOKIES || "";
+              // Leggi cookie dal file locale (ha priorità sull'env var)
+              let cookiesStr = "";
+              try {
+                const cookieFile = path.join(process.cwd(), "telegram_bot", "posttap_cookies.txt");
+                cookiesStr = fs.readFileSync(cookieFile, "utf8").trim();
+                logger?.info("🍪 [PostTap Proxy] Cookie caricati da file");
+              } catch (_) {}
               if (!cookiesStr) {
-                logger?.warn("⚠️ [PostTap Proxy] Nessun cookie POSTTAP_COOKIES configurato");
+                cookiesStr = process.env.POSTTAP_COOKIES || "";
+              }
+              if (!cookiesStr) {
+                logger?.warn("⚠️ [PostTap Proxy] Nessun cookie configurato");
                 return c.json({ error: "no_cookies", shortlink: null }, 500);
               }
 
