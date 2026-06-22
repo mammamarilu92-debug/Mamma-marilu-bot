@@ -578,7 +578,7 @@ def _get_posttap_client() -> httpx.AsyncClient:
     return _posttap_client
 
 def _save_client_cookies():
-    """Salva i cookie aggiornati dal client persistente su file e Gist."""
+    """Salva i cookie aggiornati dal client persistente solo su file locale (NON blocca l'event loop)."""
     global _posttap_client
     if _posttap_client is None:
         return
@@ -590,10 +590,29 @@ def _save_client_cookies():
         cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
         with open(cookies_file, 'w') as f:
             f.write(cookie_str)
-        save_cookies_to_gist(cookie_str)
-        logger.info(f"💾 [PostTap] Cookie aggiornati salvati: {list(jar.keys())}")
+        logger.info(f"💾 [PostTap] Cookie salvati su file locale: {list(jar.keys())}")
     except Exception as e:
         logger.warning(f"⚠️ [PostTap] Errore salvataggio cookie client: {e}")
+
+async def _save_client_cookies_async():
+    """Salva i cookie su file locale + Gist in background (non blocca l'event loop)."""
+    global _posttap_client
+    if _posttap_client is None:
+        return
+    try:
+        jar = dict(_posttap_client.cookies)
+        if not jar:
+            return
+        cookie_str = "; ".join(f"{k}={v}" for k, v in jar.items())
+        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+        with open(cookies_file, 'w') as f:
+            f.write(cookie_str)
+        logger.info(f"💾 [PostTap] Cookie salvati su file locale: {list(jar.keys())}")
+        # Gist save in thread separato — non blocca event loop
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, save_cookies_to_gist, cookie_str)
+    except Exception as e:
+        logger.warning(f"⚠️ [PostTap] Errore salvataggio async cookie: {e}")
 
 # Cache cookies PostTap (legacy — usato solo da get_posttap_cookies)
 _posttap_cookies = None
@@ -715,8 +734,8 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
         logger.info(f"📡 [PostTap] Status: {response.status_code}")
 
         if response.status_code in [200, 201]:
-            # Salva cookie aggiornati dal client (rolling session)
-            _save_client_cookies()
+            # Salva cookie aggiornati — async per non bloccare event loop
+            asyncio.ensure_future(_save_client_cookies_async())
 
             data = response.json()
             logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
