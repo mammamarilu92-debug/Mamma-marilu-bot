@@ -703,34 +703,13 @@ def get_posttap_cookies():
     return cookies
 
 async def create_posttap_shortlink(url: str, name: str = "link"):
-    """Trasforma un URL Amazon in shortlink con PostTap.
-    Se POSTTAP_PROXY_URL è configurato, usa il proxy su Replit (IP affidabile).
-    Altrimenti chiama PostTap direttamente."""
+    """Trasforma un URL Amazon in shortlink con PostTap"""
     try:
-        proxy_url = os.getenv('POSTTAP_PROXY_URL', '').strip()
-        if proxy_url:
-            logger.info(f"🔗 [PostTap] Usando proxy: {proxy_url}")
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                resp = await client.post(proxy_url, json={"url": url, "name": name})
-                logger.info(f"📡 [PostTap Proxy] Status: {resp.status_code}")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    shortlink = data.get("shortlink")
-                    if shortlink:
-                        logger.info(f"✅ [PostTap Proxy] Shortlink: {shortlink}")
-                        return shortlink
-                    else:
-                        logger.warning(f"⚠️ [PostTap Proxy] Nessun shortlink: {data}")
-                else:
-                    logger.warning(f"⚠️ [PostTap Proxy] Errore: {resp.status_code} {resp.text[:200]}")
-            return url
-
         cookies = get_posttap_cookies()
         if not cookies:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
             return url
 
-        # Pulizia URL
         clean_url = url
         if 'tag=' not in url.lower():
             clean_url = url.split('?')[0] if '?' in url else url
@@ -739,52 +718,34 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
 
         logger.info(f"🔗 [PostTap] Shortlink per: {clean_url}")
 
-        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15, cookies=cookies, follow_redirects=True) as client:
             payload = {"name": name, "url": clean_url, "tags": []}
             response = await client.post(
                 'https://creators.posttap.com/api/create-shortlink',
                 json=payload,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/plain, */*',
-                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept': 'application/json',
                     'Origin': 'https://creators.posttap.com',
                     'Referer': 'https://creators.posttap.com/dashboard',
-                    'Cookie': cookie_header,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                    'sec-ch-ua': '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
                 }
             )
 
             logger.info(f"📡 [PostTap] Status: {response.status_code}")
 
             if response.status_code in [200, 201]:
-
                 data = response.json()
-                logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
-
                 obj = data.get('object', {})
                 shortlink = (obj.get('shortlink') or obj.get('shortLink') or obj.get('short_url')
                              or data.get('shortlink') or data.get('shortLink'))
-
                 if shortlink:
                     if not shortlink.startswith('http'):
                         shortlink = f"https://{shortlink}"
                     logger.info(f"✅ [PostTap] Shortlink creato: {shortlink}")
                     return shortlink
-                else:
-                    logger.warning(f"⚠️ [PostTap] Shortlink non trovato nella risposta: {data}")
-            elif response.status_code in [401, 403]:
-                logger.warning(f"⚠️ [PostTap] Sessione scaduta ({response.status_code}) — rinnova con /setcookie")
+                logger.warning(f"⚠️ [PostTap] Shortlink non in risposta: {data}")
             else:
-                logger.error(f"❌ [PostTap] Errore API: {response.status_code} - {response.text[:200]}")
+                logger.error(f"❌ [PostTap] Errore {response.status_code}: {response.text[:200]}")
 
         return url
     except Exception as e:
