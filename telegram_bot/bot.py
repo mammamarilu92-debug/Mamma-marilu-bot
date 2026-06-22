@@ -1455,6 +1455,28 @@ def run_polling_mode(token):
     except Exception as e:
         logger.warning(f"⚠️ Errore cancellazione webhook: {e}")
     
+    # Task in background che cancella il webhook ogni 2 minuti
+    # (Mastra/Inngest lo ri-registra ogni volta che parte — questo lo blocca)
+    def _webhook_watchdog():
+        import time
+        import requests as _req
+        while True:
+            time.sleep(120)
+            try:
+                r = _req.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=10)
+                url = r.json().get("result", {}).get("url", "")
+                if url:
+                    logger.warning(f"⚠️ [Watchdog] Webhook trovato: {url[:60]}... — cancello!")
+                    _req.post(f"https://api.telegram.org/bot{token}/deleteWebhook",
+                              json={"drop_pending_updates": False}, timeout=10)
+                    logger.info("✅ [Watchdog] Webhook cancellato")
+            except Exception as e:
+                logger.warning(f"⚠️ [Watchdog] Errore: {e}")
+
+    import threading as _threading
+    _threading.Thread(target=_webhook_watchdog, daemon=True).start()
+    logger.info("🛡️ Webhook watchdog avviato (controlla ogni 2 min)")
+
     app = build_app(token)
     
     logger.info("🚀 Avvio POLLING - il bot chiede messaggi a Telegram direttamente...")
