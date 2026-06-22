@@ -655,59 +655,12 @@ def get_posttap_cookies():
                 cookies[key.strip()] = value.strip()
     return cookies
 
-# Client PostTap persistente — mantiene cookie jar tra una chiamata e l'altra
-_posttap_client: httpx.AsyncClient | None = None
-
-def _get_posttap_client() -> httpx.AsyncClient:
-    """Restituisce il client PostTap persistente, creandolo se necessario."""
-    global _posttap_client
-    if _posttap_client is None or _posttap_client.is_closed:
-        cookies = get_posttap_cookies()
-        _posttap_client = httpx.AsyncClient(
-            timeout=15,
-            cookies=cookies,
-            follow_redirects=True,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Origin': 'https://creators.posttap.com',
-                'Referer': 'https://creators.posttap.com/dashboard',
-            }
-        )
-        logger.info("🔧 [PostTap] Nuovo client creato con cookie freschi")
-    return _posttap_client
-
-def _reset_posttap_client():
-    """Resetta il client (chiamato dopo /rinnovalink con cookie nuovi)."""
-    global _posttap_client
-    if _posttap_client and not _posttap_client.is_closed:
-        # Non possiamo fare await qui (contesto sync), chiudiamo al prossimo ciclo
-        _posttap_client = None
-    logger.info("🔄 [PostTap] Client resettato — verrà ricreato con nuovi cookie")
-
-def _save_client_cookies():
-    """Salva i cookie attuali del client persistente su file."""
-    global _posttap_client
-    if _posttap_client is None:
-        return
-    try:
-        jar = dict(_posttap_client.cookies)
-        if jar:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in jar.items())
-            cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-            with open(cookies_file, 'w') as f:
-                f.write(cookie_str)
-            logger.info(f"🍪 [PostTap] Cookie client salvati su file: {list(jar.keys())}")
-    except Exception as e:
-        logger.warning(f"⚠️ [PostTap] Errore salvataggio cookie client: {e}")
-
 async def create_posttap_shortlink(url: str, name: str = "link"):
     """Trasforma un URL Amazon in shortlink con PostTap."""
     try:
         cookies = get_posttap_cookies()
         if not cookies:
-            logger.warning("⚠️ Nessun cookie PostTap configurato")
+            logger.warning("⚠️ Nessun cookie PostTap — usa /rinnovalink per configurarli")
             return url
 
         # Pulizia URL
@@ -719,42 +672,48 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
 
         logger.info(f"🔗 [PostTap] Richiesta shortlink per: {clean_url}")
 
-        client = _get_posttap_client()
-        payload = {"name": name, "url": clean_url, "tags": []}
+        # Client fresco ad ogni chiamata — semplice e affidabile
+        # I cookie vengono letti dal file (aggiornato solo da /rinnovalink)
+        async with httpx.AsyncClient(
+            timeout=15,
+            cookies=cookies,
+            follow_redirects=True,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://creators.posttap.com',
+                'Referer': 'https://creators.posttap.com/dashboard',
+            }
+        ) as client:
+            payload = {"name": name, "url": clean_url, "tags": []}
+            response = await client.post(
+                'https://creators.posttap.com/api/create-shortlink',
+                json=payload
+            )
 
-        response = await client.post(
-            'https://creators.posttap.com/api/create-shortlink',
-            json=payload
-        )
+            logger.info(f"📡 [PostTap] Status: {response.status_code}")
 
-        # Log completo per debugging (status, headers Set-Cookie, body)
-        set_cookie_hdrs = response.headers.get_list("set-cookie") if hasattr(response.headers, "get_list") else [response.headers.get("set-cookie", "")]
-        logger.info(f"📡 [PostTap] Status: {response.status_code} | Set-Cookie: {set_cookie_hdrs} | Client cookies: {list(dict(client.cookies).keys())}")
+            if response.status_code in [200, 201]:
+                data = response.json()
+                logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
+                obj = data.get('object', {})
+                shortlink = (obj.get('shortlink') or obj.get('shortLink') or obj.get('short_url')
+                             or data.get('shortlink') or data.get('shortLink'))
+                if shortlink:
+                    if not shortlink.startswith('http'):
+                        shortlink = f"https://{shortlink}"
+                    logger.info(f"✅ [PostTap] Shortlink creato: {shortlink}")
+                    return shortlink
+                else:
+                    logger.warning(f"⚠️ [PostTap] Shortlink non trovato nella risposta: {data}")
 
-        # Salva sempre i cookie aggiornati dal client (cattura rolling session)
-        _save_client_cookies()
+            elif response.status_code == 401:
+                logger.error(f"❌ [PostTap] 401 — sessione scaduta. Fai /rinnovalink")
+                logger.error(f"❌ [PostTap] Body: {response.text[:300]}")
 
-        if response.status_code in [200, 201]:
-            data = response.json()
-            logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
-            obj = data.get('object', {})
-            shortlink = (obj.get('shortlink') or obj.get('shortLink') or obj.get('short_url')
-                         or data.get('shortlink') or data.get('shortLink'))
-            if shortlink:
-                if not shortlink.startswith('http'):
-                    shortlink = f"https://{shortlink}"
-                logger.info(f"✅ [PostTap] Shortlink creato: {shortlink}")
-                return shortlink
             else:
-                logger.warning(f"⚠️ [PostTap] Shortlink non trovato: {data}")
-
-        elif response.status_code == 401:
-            logger.error(f"❌ [PostTap] 401 Unauthenticated — body: {response.text[:300]}")
-            logger.error("❌ [PostTap] Sessione scaduta. Fai /rinnovalink")
-            _reset_posttap_client()
-
-        else:
-            logger.error(f"❌ [PostTap] Errore {response.status_code} — body: {response.text[:300]}")
+                logger.error(f"❌ [PostTap] Errore {response.status_code}: {response.text[:300]}")
 
         return url
     except Exception as e:
@@ -900,7 +859,7 @@ async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f.write(cookie_str)
         global _posttap_cookies
         _posttap_cookies = None  # reset cache
-        _reset_posttap_client()  # ricrea client con nuovi cookie
+
         logger.info(f"✅ [Cookie] Salvati manualmente da Telegram: {cookie_str[:60]}...")
         await msg.reply_text("✅ Cookie salvati! Funzioneranno dal prossimo link affiliato.")
     except Exception as e:
@@ -1649,7 +1608,7 @@ async def _run_renewal_login():
                 save_cookies_to_gist(cookie_str)
                 global _posttap_cookies
                 _posttap_cookies = None  # reset cache in memoria
-                _reset_posttap_client()  # ricrea client persistente con nuovi cookie
+
                 logger.info(f"✅ Nuovi cookie PostTap salvati: {list(posttap_cookies.keys())}")
                 _renewal_state["final_cookies"] = cookie_str
                 _renewal_state["phase"] = "done"
