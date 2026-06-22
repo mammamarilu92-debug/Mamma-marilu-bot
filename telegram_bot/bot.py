@@ -773,38 +773,16 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
         return url
 
 async def cmd_rinnova_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /rinnovalink — rinnova i cookie PostTap via Telegram"""
+    """Comando /rinnovalink — DISATTIVATO.
+    Il rinnovo automatico via login Amazon generava cookie che reggevano un solo
+    link e poi smettevano. I link funzionano da soli con i cookie salvati; se un
+    giorno scadono, aggiornali a mano con /setcookie."""
     msg = update.effective_message
-    chat_id = msg.chat_id
-
-    if _renewal_state["phase"] in ("starting", "waiting_otp"):
-        await msg.reply_text("⏳ Rinnovo già in corso. Se aspetti il codice 2FA, mandamelo direttamente.")
-        return
-
-    # Reset stato
-    _renewal_state["phase"] = "idle"
-    _renewal_state["otp_event"].clear()
-    _renewal_state["otp_value"] = None
-    _renewal_state["final_cookies"] = None
-    _renewal_state["error"] = None
-    _renewal_state["chat_id"] = chat_id
-
-    email = os.environ.get("POSTTAP_EMAIL", "")
-    password = os.environ.get("POSTTAP_PASSWORD", "")
-    if not email or not password:
-        await msg.reply_text("❌ Email o password PostTap non configurati. Contattami.")
-        return
-
-    status_msg = await msg.reply_text("🔄 Avvio login PostTap... attendi circa 30 secondi.")
-    _renewal_state["phase"] = "starting"
-
-    # Avvia login in thread separato
-    t = threading.Thread(target=_renewal_thread, daemon=True)
-    t.start()
-
-    # Aggiorna il messaggio di stato mentre il login procede
-    asyncio.create_task(_poll_renewal_state(context.bot, chat_id, status_msg.message_id))
-    logger.info(f"🔑 [Rinnovo] Avviato da chat {chat_id}")
+    await msg.reply_text(
+        "✅ Non serve rinnovare: i link funzionano da soli.\n"
+        "Se un giorno smettono, aggiorna i cookie a mano con /setcookie."
+    )
+    logger.info("ℹ️ /rinnovalink richiesto ma è disattivato (rovinava i cookie)")
 
 
 async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
@@ -1748,32 +1726,9 @@ def start_health_server():
             query = parse_qs(parsed.query)
 
             if path == "/renew-cookies":
-                # Restart richiesto?
-                if query.get("restart"):
-                    _renewal_state["phase"] = "idle"
-                    _renewal_state["otp_event"].clear()
-                    _renewal_state["otp_value"] = None
-
-                ph = _renewal_state["phase"]
-                if ph == "idle":
-                    _renewal_state["phase"] = "starting"
-                    _renewal_state["otp_event"].clear()
-                    _renewal_state["otp_value"] = None
-                    _renewal_state["final_cookies"] = None
-                    _renewal_state["error"] = None
-                    t = threading.Thread(target=_renewal_thread, daemon=True)
-                    t.start()
-                    ph = "starting"
-
-                if ph == "starting":
-                    self._html('<h2>🔄 Login PostTap in corso...</h2><p class="info">Apertura Amazon. Attendi qualche secondo.</p><div class="spin">⏳</div><script>setTimeout(()=>location.reload(),3000)</script>')
-                elif ph == "waiting_otp":
-                    self._html('<h2>📱 Codice 2FA Amazon</h2><p class="info">Inserisci il codice inviato al tuo dispositivo:</p><form method="POST" action="/renew-cookies"><input type="text" name="otp" placeholder="000000" maxlength="8" autofocus autocomplete="one-time-code"><button type="submit">✅ Conferma</button></form>')
-                elif ph == "done":
-                    short = _renewal_state["final_cookies"][:100] + "..."
-                    self._html(f'<h2 class="ok">🎉 Cookie rinnovati!</h2><p class="info">I nuovi cookie PostTap sono stati salvati. Funzioneranno al prossimo link.</p><div class="cookie">{short}</div><p style="margin-top:16px"><a href="/renew-cookies?restart=1">Rinnova di nuovo</a></p>')
-                elif ph == "error":
-                    self._html(f'<h2 class="err">❌ Errore</h2><p>{_renewal_state["error"]}</p><p><a href="/renew-cookies?restart=1">Riprova</a></p>')
+                # DISATTIVATO: il rinnovo automatico via login Amazon rovinava i
+                # cookie buoni (reggevano un solo link e poi smettevano).
+                self._html('<h2>Rinnovo disattivato</h2><p class="info">I link funzionano da soli con i cookie salvati. Se un giorno servono nuovi cookie, aggiornali a mano dal bot con il comando /setcookie.</p>')
 
             else:
                 self.send_response(200)
