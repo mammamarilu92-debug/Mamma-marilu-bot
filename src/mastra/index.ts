@@ -122,6 +122,59 @@ export const mastra = new Mastra({
       // ======================================================================
       // This API route is used to register the Mastra workflow (inngest function) on the inngest server
       {
+        path: "/posttap-proxy",
+        method: "POST",
+        createHandler: async ({ mastra }) => {
+          return async (c: any) => {
+            const logger = mastra?.getLogger();
+            try {
+              const body = await c.req.json();
+              const amazonUrl = body.url;
+              const name = body.name || "link";
+              logger?.info("🔗 [PostTap Proxy] Richiesta shortlink", { url: amazonUrl });
+
+              const cookiesStr = process.env.POSTTAP_COOKIES || "";
+              if (!cookiesStr) {
+                logger?.warn("⚠️ [PostTap Proxy] Nessun cookie POSTTAP_COOKIES configurato");
+                return c.json({ error: "no_cookies", shortlink: null }, 500);
+              }
+
+              const cookieHeader = cookiesStr.trim();
+              const resp = await fetch("https://creators.posttap.com/api/create-shortlink", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Accept": "application/json, text/plain, */*",
+                  "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8",
+                  "Origin": "https://creators.posttap.com",
+                  "Referer": "https://creators.posttap.com/dashboard",
+                  "Cookie": cookieHeader,
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                },
+                body: JSON.stringify({ name, url: amazonUrl, tags: [] }),
+              });
+
+              logger?.info("📡 [PostTap Proxy] PostTap status", { status: resp.status });
+              const data = await resp.json() as any;
+
+              if (resp.ok || resp.status === 201) {
+                const obj = data?.object || {};
+                const shortlink = obj.shortlink || obj.shortLink || obj.short_url || data?.shortlink;
+                if (shortlink) {
+                  logger?.info("✅ [PostTap Proxy] Shortlink creato", { shortlink });
+                  return c.json({ shortlink });
+                }
+              }
+              logger?.warn("⚠️ [PostTap Proxy] Nessun shortlink", { status: resp.status, data });
+              return c.json({ error: "no_shortlink", status: resp.status, shortlink: null }, 502);
+            } catch (e: any) {
+              logger?.error("❌ [PostTap Proxy] Eccezione", { error: e?.message });
+              return c.json({ error: e?.message, shortlink: null }, 500);
+            }
+          };
+        },
+      },
+      {
         path: "/api/inngest",
         method: "ALL",
         createHandler: async ({ mastra }) => inngestServe({ mastra, inngest }),
@@ -246,3 +299,32 @@ if (Object.keys(mastra.getAgents()).length > 1) {
 //   logger?.info("🤖 [Bootstrap] Starting Telegram bot manager...");
 //   startBotManager(logger);
 // }
+
+// Cancella subito il webhook Telegram — Inngest lo ri-registra ogni volta che parte
+// Il bot su Render usa polling, non webhook
+const _token = process.env.TELEGRAM_BOT_TOKEN;
+if (_token) {
+  fetch(`https://api.telegram.org/bot${_token}/deleteWebhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ drop_pending_updates: false }),
+  })
+    .then(() => console.log("✅ [Bootstrap] Webhook Telegram cancellato"))
+    .catch((e) => console.warn("⚠️ [Bootstrap] Errore cancellazione webhook:", e));
+  
+  // Ripeti ogni 15 secondi per battere Inngest
+  setInterval(() => {
+    fetch(`https://api.telegram.org/bot${_token}/getWebhookInfo`)
+      .then(r => r.json())
+      .then((data: any) => {
+        if (data?.result?.url) {
+          fetch(`https://api.telegram.org/bot${_token}/deleteWebhook`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ drop_pending_updates: false }),
+          }).then(() => console.log("🛡️ [Watchdog Mastra] Webhook cancellato"));
+        }
+      })
+      .catch(() => {});
+  }, 15000);
+}
