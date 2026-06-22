@@ -567,7 +567,7 @@ _posttap_cookies = None
 GIST_FILENAME = "posttap_cookies.txt"
 
 def _load_cookies_from_gist() -> str:
-    """Scarica i cookie dal GitHub Gist privato (storage persistente)."""
+    """Scarica i cookie dal GitHub Gist privato. Chiamato SOLO all'avvio."""
     github_token = os.getenv('GITHUB_TOKEN', '')
     gist_id = os.getenv('GIST_ID', '')
     if not github_token or not gist_id:
@@ -587,12 +587,29 @@ def _load_cookies_from_gist() -> str:
         logger.warning(f"⚠️ [Gist] Errore lettura: {e}")
     return ''
 
+def init_cookies_from_gist():
+    """
+    Chiamato UNA SOLA VOLTA all'avvio del bot.
+    Legge i cookie dal Gist e li salva nel file locale.
+    Le letture successive useranno il file (veloce, no HTTP).
+    """
+    cookies_str = _load_cookies_from_gist()
+    if not cookies_str:
+        return
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    try:
+        with open(cookies_file, 'w') as f:
+            f.write(cookies_str)
+        logger.info("✅ [Gist] Cookie salvati su file locale all'avvio")
+    except Exception as e:
+        logger.warning(f"⚠️ [Gist] Impossibile salvare su file: {e}")
+
 def save_cookies_to_gist(cookie_str: str):
-    """Salva i cookie aggiornati nel GitHub Gist (sopravvive ai riavvii del container)."""
+    """Salva i cookie nel Gist. Chiamato solo dopo /rinnovalink."""
     github_token = os.getenv('GITHUB_TOKEN', '')
     gist_id = os.getenv('GIST_ID', '')
     if not github_token or not gist_id:
-        logger.warning("⚠️ [Gist] GITHUB_TOKEN o GIST_ID non configurati — cookie NON persistenti")
+        logger.warning("⚠️ [Gist] GITHUB_TOKEN o GIST_ID non configurati")
         return
     try:
         r = httpx.patch(
@@ -602,34 +619,32 @@ def save_cookies_to_gist(cookie_str: str):
             timeout=10
         )
         if r.status_code == 200:
-            logger.info("✅ [Gist] Cookie salvati su GitHub Gist (persistenti)")
+            logger.info("✅ [Gist] Cookie salvati su GitHub Gist")
         else:
-            logger.warning(f"⚠️ [Gist] Errore salvataggio: {r.status_code} {r.text[:100]}")
+            logger.warning(f"⚠️ [Gist] Errore: {r.status_code} {r.text[:100]}")
     except Exception as e:
-        logger.warning(f"⚠️ [Gist] Eccezione salvataggio: {e}")
+        logger.warning(f"⚠️ [Gist] Eccezione: {e}")
 
 def get_posttap_cookies():
-    """Carica cookies PostTap: Gist (persistente) > file locale > variabile env"""
+    """Legge i cookie dal file locale o dall'env var. Veloce, no HTTP."""
     cookies_str = ''
 
-    # Priorità 1: GitHub Gist (sopravvive ai riavvii Render)
-    cookies_str = _load_cookies_from_gist()
+    # Priorità 1: file locale (aggiornato da /rinnovalink o dall'avvio via Gist)
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    if os.path.exists(cookies_file):
+        try:
+            with open(cookies_file, 'r') as f:
+                cookies_str = f.read().strip()
+            if cookies_str:
+                logger.info("🍪 Cookie PostTap caricati da file locale")
+        except Exception as e:
+            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
 
-    # Priorità 2: file locale (rinnovato da /rinnovalink)
-    if not cookies_str:
-        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-        if os.path.exists(cookies_file):
-            try:
-                with open(cookies_file, 'r') as f:
-                    cookies_str = f.read().strip()
-                if cookies_str:
-                    logger.info("🍪 Cookie PostTap caricati da file locale")
-            except Exception as e:
-                logger.warning(f"⚠️ Errore lettura file cookie: {e}")
-
-    # Priorità 3: variabile d'ambiente
+    # Priorità 2: variabile d'ambiente
     if not cookies_str:
         cookies_str = os.getenv('POSTTAP_COOKIES', '')
+        if cookies_str:
+            logger.info("🍪 Cookie PostTap caricati da variabile d'ambiente")
 
     cookies = {}
     if cookies_str:
@@ -1408,6 +1423,7 @@ def run_polling_mode(token):
     Funziona sempre, non dipende da webhook o proxy. Perfetto per Reserved VM."""
     
     load_backgrounds_cache()
+    init_cookies_from_gist()  # Legge Gist una sola volta → salva su file locale
     get_posttap_cookies()
     logger.info("⚡ Cache caricate - Bot ottimizzato!")
     
