@@ -719,11 +719,10 @@ def get_posttap_cookie_string() -> str:
 async def create_posttap_shortlink(url: str, name: str = "link"):
     """Trasforma un URL Amazon in shortlink con PostTap.
     Chiama PostTap direttamente con i cookie dal file posttap_cookies.txt.
-    Nessuna dipendenza da Replit (il bot gira in autonomia su Render)."""
+    PostTap NON blocca gli IP dei datacenter (testato 201 da cloud),
+    quindi funziona da Render senza dipendere da Replit."""
     try:
-        # ── CHIAMATA DIRETTA a PostTap (nessuna dipendenza da Replit) ──────
-        # PostTap NON blocca gli IP dei datacenter (testato: funziona da cloud).
-        # Il proxy Replit è stato rimosso perché Replit verrà disattivato.
+        # ── CHIAMATA DIRETTA a PostTap ─────────────────────────────────────
         cookie_str = get_posttap_cookie_string()
         if not cookie_str:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
