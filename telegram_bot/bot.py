@@ -608,26 +608,35 @@ def save_cookies_to_gist(cookie_str: str):
     except Exception as e:
         logger.warning(f"⚠️ [Gist] Eccezione salvataggio: {e}")
 
+def _init_cookies_from_gist():
+    """Chiamato UNA SOLA VOLTA all'avvio: legge Gist e salva su file locale."""
+    cookies_str = _load_cookies_from_gist()
+    if not cookies_str:
+        return
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    try:
+        with open(cookies_file, 'w') as f:
+            f.write(cookies_str)
+        logger.info("✅ [Avvio] Cookie Gist salvati su file locale")
+    except Exception as e:
+        logger.warning(f"⚠️ [Avvio] Impossibile salvare cookie su file: {e}")
+
 def get_posttap_cookies():
-    """Carica cookies PostTap: Gist (persistente) > file locale > variabile env"""
+    """Legge i cookie dal file locale o env var. NON chiama il Gist (evita blocco event loop)."""
     cookies_str = ''
 
-    # Priorità 1: GitHub Gist (sopravvive ai riavvii Render)
-    cookies_str = _load_cookies_from_gist()
+    # Priorità 1: file locale (scritto da /rinnovalink o da _init_cookies_from_gist all'avvio)
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    if os.path.exists(cookies_file):
+        try:
+            with open(cookies_file, 'r') as f:
+                cookies_str = f.read().strip()
+            if cookies_str:
+                logger.info("🍪 Cookie PostTap caricati da file locale")
+        except Exception as e:
+            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
 
-    # Priorità 2: file locale (rinnovato da /rinnovalink)
-    if not cookies_str:
-        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-        if os.path.exists(cookies_file):
-            try:
-                with open(cookies_file, 'r') as f:
-                    cookies_str = f.read().strip()
-                if cookies_str:
-                    logger.info("🍪 Cookie PostTap caricati da file locale")
-            except Exception as e:
-                logger.warning(f"⚠️ Errore lettura file cookie: {e}")
-
-    # Priorità 3: variabile d'ambiente
+    # Priorità 2: variabile d'ambiente
     if not cookies_str:
         cookies_str = os.getenv('POSTTAP_COOKIES', '')
 
@@ -1411,7 +1420,7 @@ def run_polling_mode(token):
     Funziona sempre, non dipende da webhook o proxy. Perfetto per Reserved VM."""
     
     load_backgrounds_cache()
-    get_posttap_cookies()
+    _init_cookies_from_gist()  # legge Gist una volta sola → salva su file
     logger.info("⚡ Cache caricate - Bot ottimizzato!")
     
     logger.info("🗑️ Cancello eventuali webhook registrati...")
