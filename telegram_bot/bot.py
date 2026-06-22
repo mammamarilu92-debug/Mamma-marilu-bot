@@ -735,18 +735,6 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             logger.info(f"📡 [PostTap] Status: {response.status_code}")
 
             if response.status_code in [200, 201]:
-                # Rolling session: salva cookie aggiornati dalla risposta
-                new_cookies = dict(response.cookies)
-                if new_cookies:
-                    merged = {**cookies, **new_cookies}
-                    cookie_str = "; ".join(f"{k}={v}" for k, v in merged.items())
-                    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-                    try:
-                        with open(cookies_file, 'w') as f:
-                            f.write(cookie_str)
-                        logger.info(f"🍪 [PostTap] Cookie aggiornati: {list(new_cookies.keys())}")
-                    except Exception as ce:
-                        logger.warning(f"⚠️ [PostTap] Impossibile salvare cookie: {ce}")
 
                 data = response.json()
                 logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
