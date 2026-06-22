@@ -1180,7 +1180,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Carica immagine in thread pool
         loop = asyncio.get_event_loop()
         _ob = offer_bytes
-        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(_ob)).copy())
+        offer_img = await loop.run_in_executor(thread_pool, lambda: Image.open(BytesIO(_ob)))
         del _ob  # libera offer_bytes dalla RAM subito (può essere svariati MB)
         import gc as _gc_main; _gc_main.collect()
         
@@ -1337,12 +1337,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         finally:
             # Libera sempre offer_img e background dalla RAM
-            import gc
+            import gc, ctypes
             try: offer_img.close()
             except: pass
             try: background.close()
             except: pass
             gc.collect()
+            # Forza restituzione RAM al sistema operativo (evita OOM su Render 512MB)
+            try:
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+            except Exception:
+                pass
         
         logger.info(f"✅ Invio immagine brandizzata (buffer: {len(output_buffer.getvalue())} bytes)...")
         
