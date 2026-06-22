@@ -675,24 +675,8 @@ def _init_cookies_from_gist():
         logger.warning(f"⚠️ [Avvio] Impossibile salvare cookie su file: {e}")
 
 def get_posttap_cookies():
-    """Legge i cookie dal file locale o env var. NON chiama il Gist (evita blocco event loop)."""
-    cookies_str = ''
-
-    # Priorità 1: file locale (scritto da /rinnovalink o da _init_cookies_from_gist all'avvio)
-    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-    if os.path.exists(cookies_file):
-        try:
-            with open(cookies_file, 'r') as f:
-                cookies_str = f.read().strip()
-            if cookies_str:
-                logger.info("🍪 Cookie PostTap caricati da file locale")
-        except Exception as e:
-            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
-
-    # Priorità 2: variabile d'ambiente
-    if not cookies_str:
-        cookies_str = os.getenv('POSTTAP_COOKIES', '')
-
+    """Legge i cookie dal file locale o env var. Restituisce dict."""
+    cookies_str = get_posttap_cookie_string()
     cookies = {}
     if cookies_str:
         for cookie_pair in cookies_str.split(';'):
@@ -701,6 +685,25 @@ def get_posttap_cookies():
                 key, value = cookie_pair.split('=', 1)
                 cookies[key.strip()] = value.strip()
     return cookies
+
+def get_posttap_cookie_string() -> str:
+    """Legge i cookie dal file locale o env var. Restituisce stringa grezza (per Cookie header)."""
+    # Priorità 1: file locale
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    if os.path.exists(cookies_file):
+        try:
+            with open(cookies_file, 'r') as f:
+                cookies_str = f.read().strip()
+            if cookies_str:
+                logger.info("🍪 Cookie PostTap caricati da file locale")
+                return cookies_str
+        except Exception as e:
+            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
+    # Priorità 2: variabile d'ambiente
+    env_cookies = os.getenv('POSTTAP_COOKIES', '').strip()
+    if env_cookies:
+        logger.info("🍪 Cookie PostTap caricati da variabile d'ambiente")
+    return env_cookies
 
 async def create_posttap_shortlink(url: str, name: str = "link"):
     """Trasforma un URL Amazon in shortlink con PostTap.
@@ -725,8 +728,8 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             # Se proxy fallisce → continua con chiamata diretta
 
         # ── CHIAMATA DIRETTA ───────────────────────────────────────────────
-        cookies = get_posttap_cookies()
-        if not cookies:
+        cookie_str = get_posttap_cookie_string()
+        if not cookie_str:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
             return url
 
@@ -738,16 +741,18 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
 
         logger.info(f"🔗 [PostTap] Shortlink diretto per: {clean_url}")
 
-        async with httpx.AsyncClient(timeout=15, cookies=cookies, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             payload = {"name": name, "url": clean_url, "tags": []}
             response = await client.post(
                 'https://creators.posttap.com/api/create-shortlink',
                 json=payload,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept': 'application/json',
+                    'Accept': 'application/json, text/plain, */*',
                     'Origin': 'https://creators.posttap.com',
                     'Referer': 'https://creators.posttap.com/dashboard',
+                    'Cookie': cookie_str,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
                 }
             )
 
