@@ -443,56 +443,6 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     return img
 
 
-def draw_coupon_badge(image: Image.Image) -> Image.Image:
-    """Aggiunge un badge 'COUPON' rosso in alto a sinistra quando il post ha un coupon."""
-    try:
-        if image.mode != 'RGB':
-            image = image.convert("RGB")
-        draw = ImageDraw.Draw(image)
-        fp = FONT_PATH if os.path.exists(FONT_PATH) else FONT_PATH_FALLBACK
-        try:
-            font_big = ImageFont.truetype(fp, size=52)
-            font_small = ImageFont.truetype(fp, size=32)
-        except Exception:
-            font_big = ImageFont.load_default()
-            font_small = font_big
-
-        scissor = "✂"
-        label = "COUPON"
-
-        # Misure testo
-        bb1 = draw.textbbox((0, 0), scissor, font=font_big)
-        bb2 = draw.textbbox((0, 0), label, font=font_small)
-        w1 = bb1[2] - bb1[0]
-        w2 = bb2[2] - bb2[0]
-        h1 = bb1[3] - bb1[1]
-        h2 = bb2[3] - bb2[1]
-
-        pad_x, pad_y = 28, 18
-        badge_w = max(w1, w2) + pad_x * 2
-        badge_h = h1 + h2 + pad_y * 3
-
-        # Posizione: angolo in alto a sinistra con margine
-        x0, y0 = 40, 40
-        x1, y1 = x0 + badge_w, y0 + badge_h
-
-        # Rettangolo rosso con bordi arrotondati simulati
-        draw.rectangle([x0, y0, x1, y1], fill=(220, 30, 30))
-        # Bordo bianco
-        draw.rectangle([x0, y0, x1, y1], outline=(255, 255, 255), width=3)
-
-        # Forbici
-        draw.text((x0 + (badge_w - w1) // 2, y0 + pad_y), scissor, font=font_big, fill=(255, 255, 255))
-        # Scritta COUPON
-        draw.text((x0 + (badge_w - w2) // 2, y0 + pad_y + h1 + 6), label, font=font_small, fill=(255, 255, 255))
-
-        logger.info(f"✅ [Coupon] Badge aggiunto ({x0},{y0})")
-        return image
-    except Exception as e:
-        logger.error(f"❌ [Coupon] Errore badge: {e}")
-        return image
-
-
 def draw_affiliate_label(image: Image.Image, content_bottom: int = 1250, inner_margin: int = 95) -> Image.Image:
     """Aggiunge la scritta 'link affiliato' DENTRO la zona bianca, in basso a destra"""
     try:
@@ -561,122 +511,28 @@ def extract_brand_name(text: str, amazon_url: str = None):
     return brand_text if brand_text else None
 
 
-# Client PostTap persistente — mantiene i cookie aggiornati tra una chiamata e l'altra
-_posttap_client: httpx.AsyncClient | None = None
-
-def _get_posttap_client() -> httpx.AsyncClient:
-    """Restituisce il client PostTap persistente (lo crea se non esiste ancora)."""
-    global _posttap_client
-    if _posttap_client is None or _posttap_client.is_closed:
-        cookies = get_posttap_cookies()
-        _posttap_client = httpx.AsyncClient(
-            timeout=15,
-            cookies=cookies,
-            follow_redirects=True,
-        )
-        logger.info(f"🆕 [PostTap] Client creato con {len(cookies)} cookie")
-    return _posttap_client
-
-def _save_client_cookies():
-    """Salva i cookie aggiornati dal client persistente solo su file locale (NON blocca l'event loop)."""
-    global _posttap_client
-    if _posttap_client is None:
-        return
-    try:
-        jar = dict(_posttap_client.cookies)
-        if not jar:
-            return
-        cookie_str = "; ".join(f"{k}={v}" for k, v in jar.items())
-        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-        with open(cookies_file, 'w') as f:
-            f.write(cookie_str)
-        logger.info(f"💾 [PostTap] Cookie salvati su file locale: {list(jar.keys())}")
-    except Exception as e:
-        logger.warning(f"⚠️ [PostTap] Errore salvataggio cookie client: {e}")
-
-async def _save_client_cookies_async():
-    """Salva i cookie su file locale + Gist in background (non blocca l'event loop)."""
-    global _posttap_client
-    if _posttap_client is None:
-        return
-    try:
-        jar = dict(_posttap_client.cookies)
-        if not jar:
-            return
-        cookie_str = "; ".join(f"{k}={v}" for k, v in jar.items())
-        cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-        with open(cookies_file, 'w') as f:
-            f.write(cookie_str)
-        logger.info(f"💾 [PostTap] Cookie salvati su file locale: {list(jar.keys())}")
-        # Gist save in thread separato — non blocca event loop
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, save_cookies_to_gist, cookie_str)
-    except Exception as e:
-        logger.warning(f"⚠️ [PostTap] Errore salvataggio async cookie: {e}")
-
-# Cache cookies PostTap (legacy — usato solo da get_posttap_cookies)
+# Cache cookies PostTap
 _posttap_cookies = None
 
-GIST_FILENAME = "posttap_cookies.txt"
-
-def _load_cookies_from_gist() -> str:
-    """Scarica i cookie dal GitHub Gist privato (storage persistente)."""
-    github_token = os.getenv('GITHUB_TOKEN', '')
-    gist_id = os.getenv('GIST_ID', '')
-    if not github_token or not gist_id:
-        return ''
-    try:
-        r = httpx.get(
-            f"https://api.github.com/gists/{gist_id}",
-            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
-            timeout=10
-        )
-        if r.status_code == 200:
-            content = r.json().get('files', {}).get(GIST_FILENAME, {}).get('content', '')
-            if content:
-                logger.info("🍪 [Gist] Cookie PostTap caricati da GitHub Gist")
-                return content.strip()
-    except Exception as e:
-        logger.warning(f"⚠️ [Gist] Errore lettura: {e}")
-    return ''
-
-def save_cookies_to_gist(cookie_str: str):
-    """Salva i cookie aggiornati nel GitHub Gist (sopravvive ai riavvii del container)."""
-    github_token = os.getenv('GITHUB_TOKEN', '')
-    gist_id = os.getenv('GIST_ID', '')
-    if not github_token or not gist_id:
-        logger.warning("⚠️ [Gist] GITHUB_TOKEN o GIST_ID non configurati — cookie NON persistenti")
-        return
-    try:
-        r = httpx.patch(
-            f"https://api.github.com/gists/{gist_id}",
-            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
-            json={"files": {GIST_FILENAME: {"content": cookie_str}}},
-            timeout=10
-        )
-        if r.status_code == 200:
-            logger.info("✅ [Gist] Cookie salvati su GitHub Gist (persistenti)")
-        else:
-            logger.warning(f"⚠️ [Gist] Errore salvataggio: {r.status_code} {r.text[:100]}")
-    except Exception as e:
-        logger.warning(f"⚠️ [Gist] Eccezione salvataggio: {e}")
-
-def _init_cookies_from_gist():
-    """Chiamato UNA SOLA VOLTA all'avvio: legge Gist e salva su file locale."""
-    cookies_str = _load_cookies_from_gist()
-    if not cookies_str:
-        return
-    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-    try:
-        with open(cookies_file, 'w') as f:
-            f.write(cookies_str)
-        logger.info("✅ [Avvio] Cookie Gist salvati su file locale")
-    except Exception as e:
-        logger.warning(f"⚠️ [Avvio] Impossibile salvare cookie su file: {e}")
-
 def get_posttap_cookies():
-    """Legge i cookie dal file locale o env var. Restituisce dict."""
-    cookies_str = get_posttap_cookie_string()
+    """Carica cookies PostTap da file locale (priorità) o variabile env"""
+    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+    cookies_str = ''
+
+    # Priorità 1: file locale (rinnovato da renew_cookies.py)
+    if os.path.exists(cookies_file):
+        try:
+            with open(cookies_file, 'r') as f:
+                cookies_str = f.read().strip()
+            if cookies_str:
+                logger.info(f"🍪 Cookie PostTap caricati da file locale")
+        except Exception as e:
+            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
+
+    # Priorità 2: variabile d'ambiente
+    if not cookies_str:
+        cookies_str = os.getenv('POSTTAP_COOKIES', '')
+
     cookies = {}
     if cookies_str:
         for cookie_pair in cookies_str.split(';'):
@@ -686,93 +542,79 @@ def get_posttap_cookies():
                 cookies[key.strip()] = value.strip()
     return cookies
 
-def get_posttap_cookie_string() -> str:
-    """Legge i cookie dal file locale o env var. Restituisce stringa grezza (per Cookie header)."""
-    # Priorità 1: file locale
-    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
-    if os.path.exists(cookies_file):
-        try:
-            with open(cookies_file, 'r') as f:
-                cookies_str = f.read().strip()
-            if cookies_str:
-                logger.info("🍪 Cookie PostTap caricati da file locale")
-                return cookies_str
-        except Exception as e:
-            logger.warning(f"⚠️ Errore lettura file cookie: {e}")
-    # Priorità 2: variabile d'ambiente
-    env_cookies = os.getenv('POSTTAP_COOKIES', '').strip()
-    if env_cookies:
-        logger.info("🍪 Cookie PostTap caricati da variabile d'ambiente")
-    return env_cookies
-
 async def create_posttap_shortlink(url: str, name: str = "link"):
-    """Trasforma un URL Amazon in shortlink con PostTap.
-    Se POSTTAP_PROXY_URL è configurato, usa il proxy Replit (IP garantito).
-    Altrimenti chiama PostTap direttamente."""
+    """Trasforma un URL Amazon in shortlink con PostTap (velocizzato)"""
     try:
-        # ── PROXY (IP Replit, sempre funzionante) ──────────────────────────
-        proxy_url = os.getenv('POSTTAP_PROXY_URL', '').strip()
-        if proxy_url:
-            logger.info(f"🔗 [PostTap] Via proxy Replit: {proxy_url[:60]}")
-            try:
-                async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-                    resp = await client.post(proxy_url, json={"url": url, "name": name})
-                    logger.info(f"📡 [PostTap Proxy] Status: {resp.status_code}")
-                    if resp.status_code == 200:
-                        shortlink = resp.json().get("shortlink")
-                        if shortlink:
-                            logger.info(f"✅ [PostTap Proxy] Shortlink: {shortlink}")
-                            return shortlink
-            except Exception as proxy_err:
-                logger.warning(f"⚠️ [PostTap Proxy] Fallback diretto: {proxy_err}")
-            # Se proxy fallisce → continua con chiamata diretta
-
-        # ── CHIAMATA DIRETTA ───────────────────────────────────────────────
-        cookie_str = get_posttap_cookie_string()
-        if not cookie_str:
+        cookies = get_posttap_cookies()
+        if not cookies:
             logger.warning("⚠️ Nessun cookie PostTap configurato")
             return url
-
+        
+        # Pulizia URL: rimuovi parametri di tracciamento extra se necessario
+        # Amazon URL pulito aiuta PostTap a non fallire
+        # IMPORTANTE: Se l'utente vuole mantenere l'ID affiliazione originale, 
+        # non dobbiamo pulire troppo l'URL se contiene già un tag.
         clean_url = url
+        # Se non c'è già un tag affiliazione nell'URL, lo puliamo per sicurezza
         if 'tag=' not in url.lower():
             clean_url = url.split('?')[0] if '?' in url else url
             if 'ref=' in url:
-                clean_url = re.sub(r'/ref=[^/?]+', '', clean_url)
+                 clean_url = re.sub(r'/ref=[^/?]+', '', clean_url)
+        
+        logger.info(f"🔗 [PostTap] URL finale per accorciamento (con preservazione tag): {clean_url}")
 
-        logger.info(f"🔗 [PostTap] Shortlink diretto per: {clean_url}")
-
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        # Usa client dedicato per PostTap (separato per cookies)
+        async with httpx.AsyncClient(timeout=15, cookies=cookies, follow_redirects=True) as client:
             payload = {"name": name, "url": clean_url, "tags": []}
+            logger.info(f"🔗 [PostTap] Richiesta shortlink per: {clean_url}")
+            
             response = await client.post(
                 'https://creators.posttap.com/api/create-shortlink',
                 json=payload,
                 headers={
                     'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/plain, */*',
+                    'Accept': 'application/json',
                     'Origin': 'https://creators.posttap.com',
-                    'Referer': 'https://creators.posttap.com/dashboard',
-                    'Cookie': cookie_str,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    'Referer': 'https://creators.posttap.com/dashboard'
                 }
             )
-
+            
             logger.info(f"📡 [PostTap] Status: {response.status_code}")
-
+            
             if response.status_code in [200, 201]:
+                # PostTap usa "rolling session": il cookie di sessione cambia ad ogni chiamata.
+                # Salviamo i cookie aggiornati dalla risposta per le chiamate successive.
+                new_cookies = dict(response.cookies)
+                if new_cookies:
+                    merged = {**cookies, **new_cookies}
+                    cookie_str = "; ".join(f"{k}={v}" for k, v in merged.items())
+                    cookies_file = os.path.join(os.path.dirname(__file__), 'posttap_cookies.txt')
+                    try:
+                        with open(cookies_file, 'w') as f:
+                            f.write(cookie_str)
+                        logger.info(f"🍪 [PostTap] Cookie aggiornati e salvati: {list(new_cookies.keys())}")
+                    except Exception as ce:
+                        logger.warning(f"⚠️ [PostTap] Impossibile salvare i cookie: {ce}")
+
                 data = response.json()
+                logger.info(f"📥 [PostTap] Risposta: {json.dumps(data)}")
+                
+                # PostTap a volte restituisce l'URL in 'object' -> 'shortlink'
+                # o direttamente in 'shortlink' / 'shortLink'
                 obj = data.get('object', {})
-                shortlink = (obj.get('shortlink') or obj.get('shortLink') or obj.get('short_url')
-                             or data.get('shortlink') or data.get('shortLink'))
+                shortlink = obj.get('shortlink') or obj.get('shortLink') or obj.get('short_url') or data.get('shortlink') or data.get('shortLink')
+                
                 if shortlink:
                     if not shortlink.startswith('http'):
                         shortlink = f"https://{shortlink}"
                     logger.info(f"✅ [PostTap] Shortlink creato: {shortlink}")
                     return shortlink
-                logger.warning(f"⚠️ [PostTap] Shortlink non in risposta: {data}")
+                else:
+                    logger.warning(f"⚠️ [PostTap] Shortlink non trovato nella risposta: {data}")
             else:
-                logger.error(f"❌ [PostTap] Errore {response.status_code}: {response.text[:200]}")
-
-        return url
+                logger.error(f"❌ [PostTap] Errore API: {response.status_code} - {response.text}")
+                
+            return url
     except Exception as e:
         logger.error(f"❌ [PostTap] Eccezione: {e}")
         return url
@@ -815,42 +657,28 @@ async def cmd_rinnova_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
     """Controlla periodicamente lo stato del rinnovo e informa l'utente via Telegram"""
     import telegram
-    otp_msg_sent = False
-    for _ in range(300):  # max 15 minuti (copre attesa OTP)
+    for _ in range(120):  # max 2 minuti
         await asyncio.sleep(3)
         ph = _renewal_state["phase"]
 
         if ph == "waiting_otp":
-            if not otp_msg_sent:
-                try:
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=status_msg_id,
-                        text="📱 Amazon ha richiesto il codice 2FA.\nMandami il codice a 6 cifre:"
-                    )
-                    otp_msg_sent = True
-                except Exception:
-                    pass
-            continue  # aspetta finché il login finisce
-
-        elif ph == "done":
-            # Testa subito se i cookie funzionano davvero
-            test_result = "⏳ test in corso..."
-            try:
-                test_url = "https://www.amazon.it/dp/B0CX6FWGYS"
-                test_link = await create_posttap_shortlink(test_url, name="test-rinnovo")
-                if test_link and test_link != test_url:
-                    test_result = f"✅ Link testato: {test_link}"
-                else:
-                    test_result = "⚠️ Cookie salvati ma il test del link non ha funzionato — riprova /rinnovalink"
-            except Exception as te:
-                test_result = f"⚠️ Errore nel test: {te}"
-
             try:
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=status_msg_id,
-                    text=f"✅ Login riuscito! Cookie rinnovati e salvati.\n\n{test_result}\n\nI prossimi post useranno il link affiliato automaticamente."
+                    text="📱 Amazon ha richiesto il codice 2FA.\nMandami il codice a 6 cifre:"
+                )
+            except Exception:
+                pass
+            return  # L'OTP arriverà come messaggio normale
+
+        elif ph == "done":
+            short = (_renewal_state["final_cookies"] or "")[:80]
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_msg_id,
+                    text=f"✅ Cookie rinnovati con successo!\nFunzioneranno dal prossimo link affiliato."
                 )
             except Exception:
                 pass
@@ -870,23 +698,6 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
             logger.error(f"❌ [Rinnovo] Fallito: {err}")
             return
 
-
-async def cmd_test_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /testlink — testa PostTap e mostra cosa succede"""
-    msg = update.effective_message
-    await msg.reply_text("🔍 Test PostTap in corso...")
-    try:
-        cookies = get_posttap_cookies()
-        cookie_keys = list(cookies.keys())
-        await msg.reply_text(f"🍪 Cookie trovati: {cookie_keys}")
-        
-        result = await create_posttap_shortlink("https://www.amazon.it/dp/B0TEST123", name="test")
-        if "amzlink" in result or "posttap" in result:
-            await msg.reply_text(f"✅ PostTap funziona!\n{result}")
-        else:
-            await msg.reply_text(f"❌ PostTap ha restituito l'URL originale\nCookies: {cookie_keys}")
-    except Exception as e:
-        await msg.reply_text(f"❌ Errore: {e}")
 
 async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /setcookie <stringa_cookie> — salva manualmente i cookie PostTap"""
@@ -914,17 +725,10 @@ async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cookies_file = os.path.join(os.path.dirname(__file__), "posttap_cookies.txt")
         with open(cookies_file, "w") as f:
             f.write(cookie_str)
-        global _posttap_cookies, _posttap_client
-        _posttap_cookies = None  # reset cache legacy
-        # Reset client persistente — forza rilettura cookie da file
-        if _posttap_client and not _posttap_client.is_closed:
-            await _posttap_client.aclose()
-        _posttap_client = None
-        # Salva anche su Gist (in background)
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, save_cookies_to_gist, cookie_str)
-        logger.info(f"✅ [Cookie] Salvati manualmente + client resettato: {cookie_str[:60]}...")
-        await msg.reply_text("✅ Cookie salvati! Prova subito un link.")
+        global _posttap_cookies
+        _posttap_cookies = None  # reset cache
+        logger.info(f"✅ [Cookie] Salvati manualmente da Telegram: {cookie_str[:60]}...")
+        await msg.reply_text("✅ Cookie salvati! Funzioneranno dal prossimo link affiliato.")
     except Exception as e:
         logger.error(f"❌ [Cookie] Errore salvataggio: {e}")
         await msg.reply_text(f"❌ Errore nel salvataggio: {e}")
@@ -1248,15 +1052,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if _percentage:
                     logger.info(f"🧮 Percentuale calcolata automaticamente: {_percentage}")
         logger.info(f"💰 Prezzo: {_price}, Risparmio: {_savings}, %: {_percentage}, Vecchio: {_old_price}")
-
-        # Rileva coupon nel testo del post
-        _has_coupon = bool(offer_text and any(
-            kw in offer_text.lower()
-            for kw in ("scansiona coupon", "sfoglia coupon", "applica coupon", "coupon", "clip coupon")
-        ))
-        if _has_coupon:
-            logger.info("🎟️ Coupon rilevato nel post — aggiunto badge")
-
+        
         # Funzione per elaborare immagine in thread pool
         def process_image():
             import gc as _gc
@@ -1290,8 +1086,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                 text_zone_top=TEXT_ZONE_TOP, text_zone_bottom=TEXT_ZONE_BOTTOM)
                 
                 result = draw_affiliate_label(result, content_bottom=CONTENT_BOTTOM, inner_margin=60)
-                if _has_coupon:
-                    result = draw_coupon_badge(result)
                 thread_log("✅ [process_image] Overlay aggiunto")
                 
                 thread_log("🔄 [process_image] Salvando JPEG...")
@@ -1486,7 +1280,6 @@ def build_app(token):
     app.add_handler(CommandHandler("brand", set_brand))
     app.add_handler(CommandHandler("rinnovalink", cmd_rinnova_cookies))
     app.add_handler(CommandHandler("setcookie", cmd_set_cookie))
-    app.add_handler(CommandHandler("testlink", cmd_test_link))
     app.add_handler(MessageHandler(filters.ALL, handler))
     return app
 
@@ -1496,7 +1289,7 @@ def run_polling_mode(token):
     Funziona sempre, non dipende da webhook o proxy. Perfetto per Reserved VM."""
     
     load_backgrounds_cache()
-    _init_cookies_from_gist()  # legge Gist una volta sola → salva su file
+    get_posttap_cookies()
     logger.info("⚡ Cache caricate - Bot ottimizzato!")
     
     logger.info("🗑️ Cancello eventuali webhook registrati...")
@@ -1510,28 +1303,6 @@ def run_polling_mode(token):
     except Exception as e:
         logger.warning(f"⚠️ Errore cancellazione webhook: {e}")
     
-    # Task in background che cancella il webhook ogni 2 minuti
-    # (Mastra/Inngest lo ri-registra ogni volta che parte — questo lo blocca)
-    def _webhook_watchdog():
-        import time
-        import requests as _req
-        while True:
-            time.sleep(20)
-            try:
-                r = _req.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=10)
-                url = r.json().get("result", {}).get("url", "")
-                if url:
-                    logger.warning(f"⚠️ [Watchdog] Webhook trovato: {url[:60]}... — cancello!")
-                    _req.post(f"https://api.telegram.org/bot{token}/deleteWebhook",
-                              json={"drop_pending_updates": False}, timeout=10)
-                    logger.info("✅ [Watchdog] Webhook cancellato")
-            except Exception as e:
-                logger.warning(f"⚠️ [Watchdog] Errore: {e}")
-
-    import threading as _threading
-    _threading.Thread(target=_webhook_watchdog, daemon=True).start()
-    logger.info("🛡️ Webhook watchdog avviato (controlla ogni 2 min)")
-
     app = build_app(token)
     
     logger.info("🚀 Avvio POLLING - il bot chiede messaggi a Telegram direttamente...")
@@ -1588,8 +1359,7 @@ async def _run_renewal_login():
             page = await ctx.new_page()
 
             await page.goto("https://creators.posttap.com/login", timeout=30000)
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
+            await page.wait_for_load_state("networkidle")
             logger.info(f"📄 Pagina login: {await page.title()} | {page.url}")
 
             # Step 1: accetta il cookie banner se presente
@@ -1606,41 +1376,19 @@ async def _run_renewal_login():
 
             # Step 2: clicca il bottone "Sign in with Amazon" e aspetta la navigazione
             try:
-                # Cerca specificamente il pulsante Amazon
-                login_btn = None
-                for selector in [
-                    "button:has-text('Amazon')",
-                    "a:has-text('Amazon')",
-                    "[data-provider='amazon']",
-                    "button:has-text('Sign in')",
-                    "button:has-text('Accedi')",
-                ]:
-                    try:
-                        login_btn = await page.wait_for_selector(selector, timeout=5000)
-                        if login_btn:
-                            logger.info(f"🔍 Pulsante trovato con: {selector}")
-                            break
-                    except Exception:
-                        continue
-
-                if not login_btn:
-                    # Fallback: primo pulsante
-                    login_btn = await page.wait_for_selector("button", timeout=8000)
-                    logger.info("🔍 Usando primo pulsante (fallback)")
-
-                async with page.expect_navigation(timeout=20000):
+                login_btn = await page.wait_for_selector("button", timeout=8000)
+                async with page.expect_navigation(timeout=15000):
                     await login_btn.click()
-                logger.info(f"🔑 Navigato su: {page.url[:80]}")
+                logger.info(f"🔑 Navigato su: {page.url[:60]}")
             except Exception as e:
                 logger.error(f"❌ Bottone login/navigazione fallita: {e}")
                 raise
 
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
-            logger.info(f"✅ Pagina dopo click: {await page.title()} | {page.url[:80]}")
+            await page.wait_for_load_state("networkidle")
+            logger.info(f"✅ Pagina Amazon caricata: {await page.title()}")
 
             # Step 3: compila email
-            email_inp = await page.wait_for_selector("#ap_email,input[type='email']", timeout=30000)
+            email_inp = await page.wait_for_selector("#ap_email,input[type='email']", timeout=12000)
             await email_inp.fill(email)
             logger.info("📧 Email inserita")
             await page.keyboard.press("Enter")
@@ -1712,8 +1460,6 @@ async def _run_renewal_login():
                 cookies_file = os.path.join(os.path.dirname(__file__), "posttap_cookies.txt")
                 with open(cookies_file, "w") as f:
                     f.write(cookie_str)
-                # Salva anche su GitHub Gist (persistente tra riavvii Render)
-                save_cookies_to_gist(cookie_str)
                 global _posttap_cookies
                 _posttap_cookies = None  # reset cache in memoria
                 logger.info(f"✅ Nuovi cookie PostTap salvati: {list(posttap_cookies.keys())}")
