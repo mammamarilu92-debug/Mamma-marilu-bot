@@ -727,7 +727,9 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
             json=payload
         )
 
-        logger.info(f"📡 [PostTap] Status: {response.status_code}")
+        # Log completo per debugging (status, headers Set-Cookie, body)
+        set_cookie_hdrs = response.headers.get_list("set-cookie") if hasattr(response.headers, "get_list") else [response.headers.get("set-cookie", "")]
+        logger.info(f"📡 [PostTap] Status: {response.status_code} | Set-Cookie: {set_cookie_hdrs} | Client cookies: {list(dict(client.cookies).keys())}")
 
         # Salva sempre i cookie aggiornati dal client (cattura rolling session)
         _save_client_cookies()
@@ -747,12 +749,12 @@ async def create_posttap_shortlink(url: str, name: str = "link"):
                 logger.warning(f"⚠️ [PostTap] Shortlink non trovato: {data}")
 
         elif response.status_code == 401:
-            # Sessione scaduta — resetta il client così al prossimo avvio usa cookie freschi
-            logger.error("❌ [PostTap] 401 Unauthenticated — sessione scaduta. Fai /rinnovalink")
+            logger.error(f"❌ [PostTap] 401 Unauthenticated — body: {response.text[:300]}")
+            logger.error("❌ [PostTap] Sessione scaduta. Fai /rinnovalink")
             _reset_posttap_client()
 
         else:
-            logger.error(f"❌ [PostTap] Errore: {response.status_code} - {response.text[:200]}")
+            logger.error(f"❌ [PostTap] Errore {response.status_code} — body: {response.text[:300]}")
 
         return url
     except Exception as e:
@@ -796,21 +798,25 @@ async def cmd_rinnova_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
     """Controlla periodicamente lo stato del rinnovo e informa l'utente via Telegram"""
-    import telegram
-    for _ in range(120):  # max 2 minuti
+    otp_msg_sent = False
+    # max 15 minuti (300 iterazioni × 3s) — copre anche il tempo di inserimento OTP
+    for _ in range(300):
         await asyncio.sleep(3)
         ph = _renewal_state["phase"]
 
         if ph == "waiting_otp":
-            try:
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=status_msg_id,
-                    text="📱 Amazon ha richiesto il codice 2FA.\nMandami il codice a 6 cifre:"
-                )
-            except Exception:
-                pass
-            return  # L'OTP arriverà come messaggio normale
+            if not otp_msg_sent:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=status_msg_id,
+                        text="📱 Amazon ha richiesto il codice 2FA.\nMandami il codice a 6 cifre:"
+                    )
+                    otp_msg_sent = True
+                except Exception:
+                    pass
+            # NON uscire: continua a fare polling finché il login finisce
+            continue
 
         elif ph == "done":
             # Testa subito se i cookie funzionano davvero
@@ -821,7 +827,7 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
                 if test_link and test_link != test_url:
                     test_result = f"✅ Link testato: {test_link}"
                 else:
-                    test_result = "⚠️ Cookie salvati ma il test del link non ha funzionato — riprova /rinnovalink"
+                    test_result = "⚠️ Cookie salvati ma il test link non funzionato — riprova /rinnovalink"
             except Exception as te:
                 test_result = f"⚠️ Errore nel test: {te}"
 
@@ -832,7 +838,14 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
                     text=f"✅ Login riuscito! Cookie rinnovati e salvati.\n\n{test_result}\n\nI prossimi post useranno il link affiliato automaticamente."
                 )
             except Exception:
-                pass
+                # Se edit fallisce, manda un nuovo messaggio
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"✅ Login riuscito! Cookie rinnovati.\n\n{test_result}"
+                    )
+                except Exception:
+                    pass
             logger.info("✅ [Rinnovo] Completato con successo")
             return
 
@@ -845,9 +858,18 @@ async def _poll_renewal_state(bot, chat_id: int, status_msg_id: int):
                     text=f"❌ Errore rinnovo: {err}\n\nRiprova con /rinnovalink"
                 )
             except Exception:
-                pass
+                try:
+                    await bot.send_message(chat_id=chat_id, text=f"❌ Errore rinnovo: {err}\n\nRiprova con /rinnovalink")
+                except Exception:
+                    pass
             logger.error(f"❌ [Rinnovo] Fallito: {err}")
             return
+
+    # Timeout 15 minuti
+    try:
+        await bot.send_message(chat_id=chat_id, text="⏰ Timeout rinnovo (15 min). Riprova con /rinnovalink")
+    except Exception:
+        pass
 
 
 async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
