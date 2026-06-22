@@ -1493,7 +1493,7 @@ def run_polling_mode(token):
         import time
         import requests as _req
         while True:
-            time.sleep(120)
+            time.sleep(20)
             try:
                 r = _req.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=10)
                 url = r.json().get("result", {}).get("url", "")
