@@ -1552,7 +1552,8 @@ async def _run_renewal_login():
             page = await ctx.new_page()
 
             await page.goto("https://creators.posttap.com/login", timeout=30000)
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(2)
             logger.info(f"📄 Pagina login: {await page.title()} | {page.url}")
 
             # Step 1: accetta il cookie banner se presente
@@ -1569,19 +1570,41 @@ async def _run_renewal_login():
 
             # Step 2: clicca il bottone "Sign in with Amazon" e aspetta la navigazione
             try:
-                login_btn = await page.wait_for_selector("button", timeout=8000)
-                async with page.expect_navigation(timeout=15000):
+                # Cerca specificamente il pulsante Amazon
+                login_btn = None
+                for selector in [
+                    "button:has-text('Amazon')",
+                    "a:has-text('Amazon')",
+                    "[data-provider='amazon']",
+                    "button:has-text('Sign in')",
+                    "button:has-text('Accedi')",
+                ]:
+                    try:
+                        login_btn = await page.wait_for_selector(selector, timeout=5000)
+                        if login_btn:
+                            logger.info(f"🔍 Pulsante trovato con: {selector}")
+                            break
+                    except Exception:
+                        continue
+
+                if not login_btn:
+                    # Fallback: primo pulsante
+                    login_btn = await page.wait_for_selector("button", timeout=8000)
+                    logger.info("🔍 Usando primo pulsante (fallback)")
+
+                async with page.expect_navigation(timeout=20000):
                     await login_btn.click()
-                logger.info(f"🔑 Navigato su: {page.url[:60]}")
+                logger.info(f"🔑 Navigato su: {page.url[:80]}")
             except Exception as e:
                 logger.error(f"❌ Bottone login/navigazione fallita: {e}")
                 raise
 
-            await page.wait_for_load_state("networkidle")
-            logger.info(f"✅ Pagina Amazon caricata: {await page.title()}")
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(2)
+            logger.info(f"✅ Pagina dopo click: {await page.title()} | {page.url[:80]}")
 
             # Step 3: compila email
-            email_inp = await page.wait_for_selector("#ap_email,input[type='email']", timeout=12000)
+            email_inp = await page.wait_for_selector("#ap_email,input[type='email']", timeout=30000)
             await email_inp.fill(email)
             logger.info("📧 Email inserita")
             await page.keyboard.press("Enter")
