@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Cache bust: aggiorna questo per forzare ricopia dei file
-ARG CACHEBUST=20260622_3
+ARG CACHEBUST=20260622_4
 COPY telegram_bot/ ./telegram_bot/
 
 CMD ["python3", "telegram_bot/bot.py"]
