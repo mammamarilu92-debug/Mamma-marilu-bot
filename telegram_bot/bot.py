@@ -344,9 +344,21 @@ def format_price_euro_first(price_str: str) -> str:
     """Converte '22,97€' in '€22,97'"""
     if not price_str:
         return price_str
-    # Rimuove € finale e aggiunge davanti
     clean = price_str.replace('€', '').strip()
     return f"€{clean}"
+
+
+def parse_price_value(price_str: str) -> float:
+    """Estrae il valore numerico: '€39,99' → 39.99, '3,49€' → 3.49"""
+    if not price_str:
+        return 0.0
+    clean = price_str.replace('€', '').replace('$', '').replace(' ', '').strip()
+    if ',' in clean:
+        clean = clean.replace('.', '').replace(',', '.')
+    try:
+        return float(clean)
+    except ValueError:
+        return 0.0
 
 def draw_text_with_shadow(draw, pos, text, font, fill, shadow_color=(0, 0, 0, 255), shadow_offset=3):
     """Disegna testo senza contorno"""
@@ -378,13 +390,24 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
 
     pct_clean = (percentage.lstrip('-') if percentage else "").strip()
 
-    if price:
+    PRICE_THRESHOLD = 30.0   # sopra soglia → nasconde prezzo, mostra solo sconto
+
+    price_val = parse_price_value(price)
+
+    if price and pct_clean and price_val > PRICE_THRESHOLD:
+        # Prodotto costoso: solo "SCONTO X%" grande in rosso — crea curiosità
+        label_text    = "SCONTO"
+        price_text    = pct_clean          # es. "50%" — usa il font grande, colore rosso
+        price_color   = ROSSO
+        show_discount = False
+    elif price:
+        # Prodotto economico (o senza %): SOLO/OGGI A + prezzo + eventuale sconto
         label_text    = random.choice(["SOLO", "OGGI A"])
         price_text    = format_price_euro_first(price)
         price_color   = NERO
         show_discount = bool(pct_clean)
     else:
-        # Solo percentuale: label + percentuale grande in rosso
+        # Solo percentuale disponibile
         label_text    = "SCONTATO DEL"
         price_text    = pct_clean
         price_color   = ROSSO
