@@ -390,7 +390,8 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
         price_color   = ROSSO
         show_discount = False
 
-    GAP = 24
+    GAP_LBL  = 16   # gap label → prezzo (stanno vicini, formano un'unità)
+    GAP_DISC = 42   # gap prezzo → sconto (spazio per i discendenti della virgola)
 
     def mh(text, font):
         bb = draw.textbbox((0, 0), text, font=font)
@@ -399,7 +400,7 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     lh = mh(label_text, font_label)
     ph = mh(price_text, font_price) if price_text else 0
     dh = mh("SCONTO " + pct_clean, font_discount) if show_discount else 0
-    total_h = lh + GAP + ph + (GAP + dh if show_discount else 0)
+    total_h = lh + GAP_LBL + ph + (GAP_DISC + dh if show_discount else 0)
 
     if text_zone_top is not None and text_zone_bottom is not None:
         zone_h = text_zone_bottom - text_zone_top
@@ -412,13 +413,13 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     # Label piccolo, grigio
     bb = draw.textbbox((0, 0), label_text, font=font_label)
     draw.text((center_x - (bb[2] - bb[0]) // 2, y), label_text, font=font_label, fill=GRIGIO)
-    y += lh + GAP
+    y += lh + GAP_LBL
 
     # Prezzo grande
     if price_text:
         bb = draw.textbbox((0, 0), price_text, font=font_price)
         draw.text((center_x - (bb[2] - bb[0]) // 2, y), price_text, font=font_price, fill=price_color)
-        y += ph + GAP
+        y += ph + GAP_DISC
 
     # Sconto tutto in rosso acceso #E1261C
     if show_discount:
@@ -1180,7 +1181,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Blocco totale (prodotto + gap + testo) leggermente in alto rispetto al centro
         total_block_h = new_height + TEXT_GAP + TEXT_BLOCK_H
-        block_start_y = CONTENT_TOP + max(0, (content_h - total_block_h) // 2 + 30)
+        block_start_y = CONTENT_TOP + max(0, (content_h - total_block_h) // 2 - 30)
         product_y     = block_start_y
         TEXT_ZONE_TOP    = product_y + new_height + TEXT_GAP
         TEXT_ZONE_BOTTOM = TEXT_ZONE_TOP + TEXT_BLOCK_H
