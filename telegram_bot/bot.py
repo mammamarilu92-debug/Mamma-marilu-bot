@@ -311,23 +311,27 @@ def parse_manual_prices(text: str):
         return None
 
 
-FONT_PATH = os.path.join(SCRIPT_DIR, "fonts/Montserrat-ExtraBold.ttf")
+FONT_PATH        = os.path.join(SCRIPT_DIR, "fonts/Montserrat-ExtraBold.ttf")
+FONT_PATH_BLACK  = os.path.join(SCRIPT_DIR, "fonts/Montserrat-Black.ttf")
+FONT_PATH_MEDIUM = os.path.join(SCRIPT_DIR, "fonts/Montserrat-Medium.ttf")
 FONT_PATH_FALLBACK = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # Cache font caricati una sola volta all'avvio
 def _load_fonts():
-    fp = FONT_PATH if os.path.exists(FONT_PATH) else FONT_PATH_FALLBACK
+    fp_black  = FONT_PATH_BLACK  if os.path.exists(FONT_PATH_BLACK)  else FONT_PATH_FALLBACK
+    fp_eb     = FONT_PATH        if os.path.exists(FONT_PATH)        else FONT_PATH_FALLBACK
+    fp_medium = FONT_PATH_MEDIUM if os.path.exists(FONT_PATH_MEDIUM) else FONT_PATH_FALLBACK
     try:
         return (
-            ImageFont.truetype(fp, size=148),  # prezzo — punto focale
-            ImageFont.truetype(fp, size=65),   # label "LO PAGHI"
-            ImageFont.truetype(fp, size=90),   # sconto "SCONTO XX%"
+            ImageFont.truetype(fp_black,  size=175),  # prezzo — Montserrat Black, punto focale
+            ImageFont.truetype(fp_medium, size=58),   # label "LO PAGHI" — Montserrat Medium
+            ImageFont.truetype(fp_eb,     size=90),   # sconto — Montserrat ExtraBold
         )
     except Exception:
         try:
             return (
-                ImageFont.truetype(FONT_PATH_FALLBACK, size=148),
-                ImageFont.truetype(FONT_PATH_FALLBACK, size=65),
+                ImageFont.truetype(FONT_PATH_FALLBACK, size=175),
+                ImageFont.truetype(FONT_PATH_FALLBACK, size=58),
                 ImageFont.truetype(FONT_PATH_FALLBACK, size=90),
             )
         except Exception:
@@ -370,7 +374,7 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
 
     NERO   = (12, 12, 12)
     GRIGIO = (130, 130, 130)
-    ROSSO  = (218, 28, 28)
+    ROSSO  = (225, 38, 28)   # #E1261C
 
     pct_clean = (percentage.lstrip('-') if percentage else "").strip()
 
@@ -416,15 +420,11 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
         draw.text((center_x - (bb[2] - bb[0]) // 2, y), price_text, font=font_price, fill=price_color)
         y += ph + GAP
 
-    # Sconto bicolore: "SCONTO " nero + "XX%" rosso
+    # Sconto tutto in rosso acceso #E1261C
     if show_discount:
-        p1, p2 = "SCONTO ", pct_clean
-        bb1 = draw.textbbox((0, 0), p1, font=font_discount)
-        bb2 = draw.textbbox((0, 0), p2, font=font_discount)
-        w1, w2 = bb1[2] - bb1[0], bb2[2] - bb2[0]
-        x0 = center_x - (w1 + w2) // 2
-        draw.text((x0,      y), p1, font=font_discount, fill=NERO)
-        draw.text((x0 + w1, y), p2, font=font_discount, fill=ROSSO)
+        disc_text = f"SCONTO {pct_clean}"
+        bb = draw.textbbox((0, 0), disc_text, font=font_discount)
+        draw.text((center_x - (bb[2] - bb[0]) // 2, y), disc_text, font=font_discount, fill=ROSSO)
 
     logger.info(f"🎨 [Overlay] Premium: '{label_text}' '{price_text}' sconto={pct_clean}")
     return img
@@ -1163,7 +1163,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CONTENT_TOP    = 80
         CONTENT_BOTTOM = 1820
         TEXT_BLOCK_H   = 420   # altezza blocco testo con font grandi (148+90+65+gap)
-        TEXT_GAP       = 40    # gap tra prodotto e testo
+        TEXT_GAP       = 65    # gap tra prodotto e testo — respiro premium
         
         available_width  = bg_width - (2 * margin)
         content_h        = CONTENT_BOTTOM - CONTENT_TOP   # 1570px
