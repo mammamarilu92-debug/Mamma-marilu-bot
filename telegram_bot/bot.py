@@ -379,7 +379,7 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     pct_clean = (percentage.lstrip('-') if percentage else "").strip()
 
     if price:
-        label_text    = "LO PAGHI"
+        label_text    = random.choice(["SOLO", "OGGI A"])
         price_text    = format_price_euro_first(price)
         price_color   = NERO
         show_discount = bool(pct_clean)
