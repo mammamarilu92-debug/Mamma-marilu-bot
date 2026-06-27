@@ -311,7 +311,7 @@ def parse_manual_prices(text: str):
         return None
 
 
-FONT_PATH = os.path.join(SCRIPT_DIR, "fonts/Poppins-SemiBold.ttf")
+FONT_PATH = os.path.join(SCRIPT_DIR, "fonts/Montserrat-ExtraBold.ttf")
 FONT_PATH_FALLBACK = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # Cache font caricati una sola volta all'avvio
@@ -319,16 +319,16 @@ def _load_fonts():
     fp = FONT_PATH if os.path.exists(FONT_PATH) else FONT_PATH_FALLBACK
     try:
         return (
-            ImageFont.truetype(fp, size=130),
-            ImageFont.truetype(fp, size=80),
-            ImageFont.truetype(fp, size=65),
+            ImageFont.truetype(fp, size=148),  # prezzo — punto focale
+            ImageFont.truetype(fp, size=65),   # label "LO PAGHI"
+            ImageFont.truetype(fp, size=90),   # sconto "SCONTO XX%"
         )
     except Exception:
         try:
             return (
-                ImageFont.truetype(FONT_PATH_FALLBACK, size=130),
-                ImageFont.truetype(FONT_PATH_FALLBACK, size=80),
+                ImageFont.truetype(FONT_PATH_FALLBACK, size=148),
                 ImageFont.truetype(FONT_PATH_FALLBACK, size=65),
+                ImageFont.truetype(FONT_PATH_FALLBACK, size=90),
             )
         except Exception:
             d = ImageFont.load_default()
@@ -351,95 +351,82 @@ def draw_text_with_shadow(draw, pos, text, font, fill, shadow_color=(0, 0, 0, 25
 
 
 def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage: str, old_price: str, image_top_y: int = None, text_zone_top: int = None, text_zone_bottom: int = None, text_gap: int = 20) -> Image.Image:
-    """
-    Disegna il prezzo/sconto nella zona testo (testo centrato verticalmente).
-    text_zone_top / text_zone_bottom definiscono la zona dove il testo viene centrato.
-    """
-    available_variants = []
-    if price:
-        available_variants.append(0)
-    if price and not percentage:
-        available_variants.append(2)
-    if price and percentage:
-        available_variants.append(3)
-    if percentage:
-        available_variants.append(4)
-
-    if not available_variants:
+    """Layout premium minimalista:
+      - Label piccolo grigio ("LO PAGHI" o "SCONTATO DEL")
+      - Prezzo molto grande nero — punto focale
+      - Sconto bicolore: "SCONTO " (nero) + "XX%" (rosso acceso)
+    Tutto centrato nella text_zone."""
+    if not price and not percentage:
         return image
-
-    variant = random.choice(available_variants)
-
-    line3 = ""
-    if variant == 0:
-        pct_clean = percentage.lstrip('-') if percentage else None
-        line1 = "Lo paghi"
-        line2 = format_price_euro_first(price)
-        line3 = f"Sconto {pct_clean}" if pct_clean else ""
-    elif variant == 2:
-        line1 = ""
-        line2 = format_price_euro_first(price)
-    elif variant == 3:
-        pct_clean = percentage.lstrip('-') if percentage else ""
-        line1 = f"Sconto {pct_clean}" if pct_clean else "Offerta"
-        line2 = format_price_euro_first(price)
-    else:  # variant == 4
-        line1 = "Scontato del"
-        line2 = percentage.lstrip('-') if percentage else percentage
-
-    logger.info(f"🎨 [Overlay] Variante {variant}: '{line1}' '{line2}' '{line3}'")
 
     img = image if image.mode == 'RGB' else image.convert("RGB")
     draw = ImageDraw.Draw(img)
-    width, height = img.size
-
-    font_big   = _FONT_BIG
-    font_small = _FONT_SMALL
-    font_line3 = _FONT_LINE3
-
-    # Misura altezze testo
-    tmp = draw
-    text1_h = (tmp.textbbox((0,0), line1, font=font_small)[3] - tmp.textbbox((0,0), line1, font=font_small)[1]) if line1 else 0
-    text2_h = tmp.textbbox((0,0), line2, font=font_big)[3] - tmp.textbbox((0,0), line2, font=font_big)[1]
-    text3_h = (tmp.textbbox((0,0), line3, font=font_line3)[3] - tmp.textbbox((0,0), line3, font=font_line3)[1]) if line3 else 0
-
-    gap = 30
-    total_h = (text1_h + gap if line1 else 0) + text2_h + (gap + text3_h if line3 else 0)
-
+    width = img.size[0]
     center_x = width // 2
 
-    # Posizione verticale
+    font_price    = _FONT_BIG    # size 148 — punto focale
+    font_label    = _FONT_SMALL  # size 65  — label grigio
+    font_discount = _FONT_LINE3  # size 90  — SCONTO XX%
+
+    NERO   = (12, 12, 12)
+    GRIGIO = (130, 130, 130)
+    ROSSO  = (218, 28, 28)
+
+    pct_clean = (percentage.lstrip('-') if percentage else "").strip()
+
+    if price:
+        label_text    = "LO PAGHI"
+        price_text    = format_price_euro_first(price)
+        price_color   = NERO
+        show_discount = bool(pct_clean)
+    else:
+        # Solo percentuale: label + percentuale grande in rosso
+        label_text    = "SCONTATO DEL"
+        price_text    = pct_clean
+        price_color   = ROSSO
+        show_discount = False
+
+    GAP = 24
+
+    def mh(text, font):
+        bb = draw.textbbox((0, 0), text, font=font)
+        return bb[3] - bb[1]
+
+    lh = mh(label_text, font_label)
+    ph = mh(price_text, font_price) if price_text else 0
+    dh = mh("SCONTO " + pct_clean, font_discount) if show_discount else 0
+    total_h = lh + GAP + ph + (GAP + dh if show_discount else 0)
+
     if text_zone_top is not None and text_zone_bottom is not None:
         zone_h = text_zone_bottom - text_zone_top
         y = text_zone_top + (zone_h - total_h) // 2
     elif image_top_y is not None:
-        # Testo posizionato text_gap px sopra il top del prodotto, clamped al margine
         y = max(40, image_top_y - total_h - text_gap)
     else:
         y = 40
 
-    # Nero
-    NERO           = (0, 0, 0, 255)
-    color_label    = NERO
-    color_price    = NERO
-    color_discount = NERO
+    # Label piccolo, grigio
+    bb = draw.textbbox((0, 0), label_text, font=font_label)
+    draw.text((center_x - (bb[2] - bb[0]) // 2, y), label_text, font=font_label, fill=GRIGIO)
+    y += lh + GAP
 
-    if line1:
-        b = tmp.textbbox((0,0), line1, font=font_small)
-        w1 = b[2] - b[0]
-        draw_text_with_shadow(draw, (center_x - w1 // 2, y), line1, font_small, color_label)
-        y += text1_h + gap
+    # Prezzo grande
+    if price_text:
+        bb = draw.textbbox((0, 0), price_text, font=font_price)
+        draw.text((center_x - (bb[2] - bb[0]) // 2, y), price_text, font=font_price, fill=price_color)
+        y += ph + GAP
 
-    b2 = tmp.textbbox((0,0), line2, font=font_big)
-    w2 = b2[2] - b2[0]
-    draw_text_with_shadow(draw, (center_x - w2 // 2, y), line2, font_big, color_price)
-    y += text2_h + gap
+    # Sconto bicolore: "SCONTO " nero + "XX%" rosso
+    if show_discount:
+        p1, p2 = "SCONTO ", pct_clean
+        bb1 = draw.textbbox((0, 0), p1, font=font_discount)
+        bb2 = draw.textbbox((0, 0), p2, font=font_discount)
+        w1, w2 = bb1[2] - bb1[0], bb2[2] - bb2[0]
+        x0 = center_x - (w1 + w2) // 2
+        draw.text((x0,      y), p1, font=font_discount, fill=NERO)
+        draw.text((x0 + w1, y), p2, font=font_discount, fill=ROSSO)
 
-    if line3:
-        b3 = tmp.textbbox((0,0), line3, font=font_line3)
-        w3 = b3[2] - b3[0]
-        draw_text_with_shadow(draw, (center_x - w3 // 2, y), line3, font_line3, color_discount)
-
+    logger.info(f"🎨 [Overlay] Premium: '{label_text}' '{price_text}' sconto={pct_clean}")
     return img
 
 
@@ -1175,7 +1162,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Sfondo bianco — usa quasi tutta l'altezza
         CONTENT_TOP    = 80
         CONTENT_BOTTOM = 1820
-        TEXT_BLOCK_H   = 230   # altezza stimata per il blocco testo prezzo/sconto
+        TEXT_BLOCK_H   = 420   # altezza blocco testo con font grandi (148+90+65+gap)
         TEXT_GAP       = 40    # gap tra prodotto e testo
         
         available_width  = bg_width - (2 * margin)
@@ -1193,7 +1180,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Blocco totale (prodotto + gap + testo) leggermente in alto rispetto al centro
         total_block_h = new_height + TEXT_GAP + TEXT_BLOCK_H
-        block_start_y = CONTENT_TOP + max(0, (content_h - total_block_h) // 2 - 120)
+        block_start_y = CONTENT_TOP + max(0, (content_h - total_block_h) // 2 + 30)
         product_y     = block_start_y
         TEXT_ZONE_TOP    = product_y + new_height + TEXT_GAP
         TEXT_ZONE_BOTTOM = TEXT_ZONE_TOP + TEXT_BLOCK_H
