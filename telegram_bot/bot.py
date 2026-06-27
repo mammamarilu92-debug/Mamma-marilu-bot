@@ -311,7 +311,7 @@ def parse_manual_prices(text: str):
         return None
 
 
-FONT_PATH = os.path.join(SCRIPT_DIR, "fonts/Oswald-Bold.ttf")
+FONT_PATH = os.path.join(SCRIPT_DIR, "fonts/Poppins-SemiBold.ttf")
 FONT_PATH_FALLBACK = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # Cache font caricati una sola volta all'avvio
