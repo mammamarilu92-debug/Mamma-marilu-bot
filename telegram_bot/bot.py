@@ -325,7 +325,7 @@ def _load_fonts():
         return (
             ImageFont.truetype(fp_black,  size=175),  # prezzo — Montserrat Black, punto focale
             ImageFont.truetype(fp_medium, size=58),   # label "LO PAGHI" — Montserrat Medium
-            ImageFont.truetype(fp_eb,     size=90),   # sconto — Montserrat ExtraBold
+            ImageFont.truetype(fp_eb,     size=78),   # sconto — Montserrat ExtraBold (−13%, non compete col prezzo)
         )
     except Exception:
         try:
@@ -373,7 +373,7 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     font_discount = _FONT_LINE3  # size 90  — SCONTO XX%
 
     NERO   = (12, 12, 12)
-    GRIGIO = (130, 130, 130)
+    GRIGIO = (68, 68, 68)    # #444 — grigio scuro, leggibile
     ROSSO  = (225, 38, 28)   # #E1261C
 
     pct_clean = (percentage.lstrip('-') if percentage else "").strip()
