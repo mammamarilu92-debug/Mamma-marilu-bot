@@ -939,52 +939,36 @@ async def set_brand(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Utente {user_id} in attesa di inviare il brand")
 
 
-# Funzione per creare un video da un'immagine
-def create_video_from_image(image_pil, duration_sec=1):
-    """Crea un file MP4 da un'immagine PIL usando ffmpeg - 720p per risparmiare RAM"""
+def create_video_bytes_from_jpeg(jpeg_bytes: bytes, duration_sec: int = 2) -> bytes:
+    """Genera MP4 interamente in RAM via pipe ffmpeg — zero disco, risoluzione piena 1080x1920.
+    Invia 3 frame JPEG identici a 1fps: ffmpeg li codifica e -t taglia a duration_sec."""
     import subprocess, gc
-    tmp_img = None
-    tmp_video = None
     try:
-        # Ridimensiona a 720x1280 per risparmiare RAM (formato verticale Stories)
-        img_resized = image_pil.resize((720, 1280), Image.Resampling.LANCZOS)
-
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-            tmp_img = f.name
-        img_resized.save(tmp_img, 'JPEG', quality=85)
-        del img_resized
-        gc.collect()
-
-        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as f:
-            tmp_video = f.name
-
-        result = subprocess.run([
+        frames = jpeg_bytes * 3  # 3 frame × 1fps = 3s input, -t 2 taglia a 2s
+        cmd = [
             'ffmpeg', '-y',
-            '-loop', '1',
-            '-framerate', '25',
-            '-i', tmp_img,
+            '-framerate', '1',
+            '-f', 'image2pipe', '-vcodec', 'mjpeg',
+            '-i', 'pipe:0',
             '-c:v', 'libx264',
             '-t', str(duration_sec),
             '-pix_fmt', 'yuv420p',
             '-preset', 'ultrafast',
             '-tune', 'stillimage',
-            '-crf', '28',
-            '-r', '25',
-            tmp_video
-        ], capture_output=True, text=True, timeout=60)
-
+            '-crf', '18',                              # alta qualità — nitido
+            '-movflags', 'frag_keyframe+empty_moov',   # MP4 streamabile su pipe
+            '-f', 'mp4',
+            'pipe:1'
+        ]
+        result = subprocess.run(cmd, input=frames, capture_output=True, timeout=60)
         if result.returncode != 0:
-            logger.error(f"❌ ffmpeg error: {result.stderr[-300:]}")
+            logger.error(f"❌ ffmpeg pipe error: {result.stderr[-400:]}")
             return None
-
-        logger.info(f"✅ Video creato con ffmpeg: {tmp_video}")
-        return tmp_video
+        logger.info(f"✅ Video in-memory: {len(result.stdout)//1024}KB")
+        return result.stdout
     except Exception as e:
-        logger.error(f"❌ Errore creazione video: {e}")
+        logger.error(f"❌ Errore video pipe: {e}")
         return None
-    finally:
-        if tmp_img and os.path.exists(tmp_img):
-            os.unlink(tmp_img)
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gestisce le immagini ricevute - semplice e affidabile"""
@@ -1425,23 +1409,41 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not final_caption:
             final_caption = "✨"
         
-        # Invia foto
+        # Genera video 2s in-memory e invia
         import gc
         try:
-            buffer_to_send = BytesIO(output_buffer.getvalue())
-            buffer_to_send.seek(0)
+            jpeg_bytes = output_buffer.getvalue()
             output_buffer.close()
             gc.collect()
 
-            logger.info("📸 Inviando immagine a Telegram...")
-            await msg.reply_photo(
-                photo=buffer_to_send,
-                caption=final_caption,
-                parse_mode="HTML"
+            logger.info("🎬 Generando video 2s in-memory (pipe ffmpeg)...")
+            video_bytes = await loop.run_in_executor(
+                thread_pool, create_video_bytes_from_jpeg, jpeg_bytes
             )
-            logger.info("✅✅✅ FOTO INVIATA CON SUCCESSO! ✅✅✅")
+            gc.collect()
+
+            if video_bytes:
+                video_buf = BytesIO(video_bytes)
+                video_buf.name = 'video.mp4'
+                logger.info(f"📹 Inviando video ({len(video_bytes)//1024}KB) a Telegram...")
+                await msg.reply_video(
+                    video=video_buf,
+                    caption=final_caption,
+                    parse_mode="HTML",
+                    width=1080,
+                    height=1920,
+                    duration=2,
+                    supports_streaming=True,
+                )
+                logger.info("✅✅✅ VIDEO INVIATO CON SUCCESSO! ✅✅✅")
+            else:
+                logger.warning("⚠️ Video fallito — invio foto come fallback")
+                photo_buf = BytesIO(jpeg_bytes)
+                photo_buf.seek(0)
+                await msg.reply_photo(photo=photo_buf, caption=final_caption, parse_mode="HTML")
+                logger.info("✅ Foto inviata (fallback)")
         except Exception as e:
-            logger.error(f"❌ ERRORE SEND_PHOTO: {e}")
+            logger.error(f"❌ ERRORE INVIO: {e}")
             return
 
         # Elimina status e messaggio originale
