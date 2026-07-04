@@ -1171,7 +1171,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CONTENT_TOP    = 80
         CONTENT_BOTTOM = 1820
         TEXT_BLOCK_H   = 420   # altezza blocco testo con font grandi (148+90+65+gap)
-        TEXT_GAP       = 14    # gap tra prodotto e testo
+        TEXT_GAP       = 4     # gap tra prodotto e testo
         
         available_width  = bg_width - (2 * margin)
         content_h        = CONTENT_BOTTOM - CONTENT_TOP   # 1570px
