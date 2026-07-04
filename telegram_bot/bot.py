@@ -323,9 +323,9 @@ def _load_fonts():
     fp_medium = FONT_PATH_MEDIUM if os.path.exists(FONT_PATH_MEDIUM) else FONT_PATH_FALLBACK
     try:
         return (
-            ImageFont.truetype(fp_black,  size=175),  # prezzo — Montserrat Black, punto focale
-            ImageFont.truetype(fp_medium, size=58),   # label "LO PAGHI" — Montserrat Medium
-            ImageFont.truetype(fp_eb,     size=78),   # sconto — Montserrat ExtraBold (−13%, non compete col prezzo)
+            ImageFont.truetype(fp_black,  size=158),  # prezzo — Montserrat Black, punto focale
+            ImageFont.truetype(fp_medium, size=50),   # label — Montserrat Medium
+            ImageFont.truetype(fp_eb,     size=68),   # sconto — Montserrat ExtraBold
         )
     except Exception:
         try:
@@ -955,7 +955,7 @@ def create_video_bytes_from_jpeg(jpeg_bytes: bytes, duration_sec: int = 2) -> by
             '-pix_fmt', 'yuv420p',
             '-preset', 'ultrafast',
             '-tune', 'stillimage',
-            '-crf', '18',                              # alta qualità — nitido
+            '-crf', '15',                              # qualità molto alta — nitido
             '-movflags', 'frag_keyframe+empty_moov',   # MP4 streamabile su pipe
             '-f', 'mp4',
             'pipe:1'
@@ -1171,7 +1171,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CONTENT_TOP    = 80
         CONTENT_BOTTOM = 1820
         TEXT_BLOCK_H   = 420   # altezza blocco testo con font grandi (148+90+65+gap)
-        TEXT_GAP       = 30    # gap tra prodotto e testo
+        TEXT_GAP       = 14    # gap tra prodotto e testo
         
         available_width  = bg_width - (2 * margin)
         content_h        = CONTENT_BOTTOM - CONTENT_TOP   # 1570px
@@ -1266,7 +1266,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output_buffer = BytesIO()
                 if result.mode != 'RGB':
                     result = result.convert('RGB')
-                result.save(output_buffer, format='JPEG', quality=85)
+                result.save(output_buffer, format='JPEG', quality=95)
                 # Libera il risultato subito dopo il salvataggio
                 result.close()
                 result = None
