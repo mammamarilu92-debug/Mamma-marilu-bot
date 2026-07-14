@@ -1130,11 +1130,26 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"🔍 is_direct_photo={is_direct_photo}, has_link_preview={has_link_preview}, is_manual_product={is_manual_product}")
 
-        # Se è una FOTO DIRETTA (senza testo e senza link preview) → ignora
-        # (il background si cambia SOLO con il comando /brand)
+        # Se è una FOTO DIRETTA (senza testo e senza link preview)
         if is_direct_photo and not has_link_preview and not is_manual_product:
-            logger.info("📸 Foto diretta ricevuta senza testo → ignorata (usa /brand per cambiare sfondo)")
-            context.user_data['waiting_for_brand'] = False
+            if context.user_data.get('waiting_for_brand', False):
+                # L'utente ha usato /brand → salva come sfondo
+                context.user_data['waiting_for_brand'] = False
+                logger.info("📸 Foto diretta dopo /brand → salvo come background")
+                status = await msg.reply_text("⏳ Sto salvando il tuo sfondo...")
+                loop = asyncio.get_event_loop()
+                save_success = await loop.run_in_executor(thread_pool, lambda: save_user_brand(user_id, offer_bytes))
+                if save_success:
+                    await msg.reply_photo(
+                        photo=BytesIO(offer_bytes),
+                        caption="✅ Sfondo salvato! Adesso inviami le immagini da elaborare 🎨"
+                    )
+                else:
+                    await msg.reply_text("❌ Errore nel salvataggio. Riprova!")
+                await status.delete()
+            else:
+                # Foto mandata per sbaglio → ignora silenziosamente
+                logger.info("📸 Foto diretta senza /brand → ignorata")
             return
         
         # Se c'è un link preview o testo → SEMPRE elabora l'immagine (mai salvare come background)
