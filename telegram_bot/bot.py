@@ -136,6 +136,20 @@ def load_user_brand(user_id):
         logger.error(f"❌ Errore caricamento brand: {e}")
     return None
 
+def delete_user_brand(user_id):
+    """Cancella il brand personale dell'utente (torna ai background casuali)"""
+    try:
+        brand_path = get_user_brand_path(user_id)
+        if os.path.exists(brand_path):
+            os.remove(brand_path)
+            logger.info(f"🗑️ Brand rimosso per utente {user_id}")
+            return True
+        return False  # non esisteva
+    except Exception as e:
+        logger.error(f"❌ Errore rimozione brand: {e}")
+        return False
+
+
 def get_random_background():
     """Carica un background ALTERNATO dalla cache (ogni volta diverso dal precedente)"""
     global cached_backgrounds, last_background_index
@@ -872,6 +886,21 @@ async def cmd_test_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await msg.reply_text(f"❌ Errore: {e}")
 
+async def cmd_resetbrand(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /resetbrand — cancella il background personale e torna agli sfondi casuali"""
+    user_id = update.effective_user.id
+    removed = delete_user_brand(user_id)
+    if removed:
+        await update.message.reply_text(
+            "✅ Sfondo personale rimosso!\n"
+            "Da ora il bot userà di nuovo gli sfondi casuali predefiniti."
+        )
+    else:
+        await update.message.reply_text(
+            "ℹ️ Non hai uno sfondo personale salvato — stai già usando gli sfondi casuali."
+        )
+
+
 async def cmd_set_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /setcookie <stringa_cookie> — salva manualmente i cookie PostTap"""
     msg = update.effective_message
@@ -1101,30 +1130,11 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"🔍 is_direct_photo={is_direct_photo}, has_link_preview={has_link_preview}, is_manual_product={is_manual_product}")
 
-        # Se è una FOTO DIRETTA (senza testo) → salva come background
+        # Se è una FOTO DIRETTA (senza testo e senza link preview) → ignora
+        # (il background si cambia SOLO con il comando /brand)
         if is_direct_photo and not has_link_preview and not is_manual_product:
-            logger.info("📸 Foto diretta ricevuta → Salvo come background automaticamente")
-            
-            # Resetta il flag /brand in ogni caso
+            logger.info("📸 Foto diretta ricevuta senza testo → ignorata (usa /brand per cambiare sfondo)")
             context.user_data['waiting_for_brand'] = False
-            
-            status = await msg.reply_text("⏳ Sto salvando la tua immagine come background...")
-            
-            # Salva il brand su file (persistente)
-            loop = asyncio.get_event_loop()
-            save_success = await loop.run_in_executor(thread_pool, lambda: save_user_brand(user_id, offer_bytes))
-            
-            if save_success:
-                logger.info(f"✅ Background salvato per utente {user_id}")
-                
-                await msg.reply_photo(
-                    photo=BytesIO(offer_bytes),
-                    caption="✅ Background salvato! Adesso inviami le immagini da incollare sopra 🎨"
-                )
-            else:
-                await msg.reply_text("❌ Errore nel salvataggio. Riprova!")
-            
-            await status.delete()
             return
         
         # Se c'è un link preview o testo → SEMPRE elabora l'immagine (mai salvare come background)
@@ -1257,7 +1267,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result = draw_price_overlay(result, _price, _savings, _percentage, _old_price,
                                                 text_zone_top=TEXT_ZONE_TOP, text_zone_bottom=TEXT_ZONE_BOTTOM)
                 
-                result = draw_affiliate_label(result, content_bottom=CONTENT_BOTTOM, inner_margin=60)
+                # draw_affiliate_label disabilitato — già sugli sfondi
                 if _has_coupon:
                     result = draw_coupon_badge(result)
                 thread_log("✅ [process_image] Overlay aggiunto")
@@ -1476,6 +1486,7 @@ def build_app(token):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("brand", set_brand))
     app.add_handler(CommandHandler("rinnovalink", cmd_rinnova_cookies))
+    app.add_handler(CommandHandler("resetbrand", cmd_resetbrand))
     app.add_handler(CommandHandler("setcookie", cmd_set_cookie))
     app.add_handler(CommandHandler("testlink", cmd_test_link))
     app.add_handler(MessageHandler(filters.ALL, handler))
