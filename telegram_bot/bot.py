@@ -1180,8 +1180,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"⚠️ Errore apertura brand: {e}")
                 background = None
         if background is None:
+            bg_path = await loop.run_in_executor(thread_pool, get_random_background)
+            if bg_path:
+                try:
+                    background = Image.open(bg_path).convert('RGB')
+                    logger.info(f"🎨 Sfondo casuale: {os.path.basename(bg_path)}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Errore apertura sfondo casuale: {e}")
+                    background = None
+        if background is None:
             background = Image.new('RGB', (1080, 1920), color=(255, 255, 255))
-            logger.info("🤍 Sfondo bianco puro creato")
+            logger.info("🤍 Sfondo bianco puro (nessun asset trovato)")
         
         # Sfondo già in RGB e già ridimensionato a 1080x1920 dalla cache
         TARGET_SIZE = (1080, 1920)
