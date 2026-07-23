@@ -112,19 +112,68 @@ def get_user_brand_path(user_id):
     return os.path.join(USER_BRANDS_DIR, f"brand_{user_id}.png")
 
 def save_user_brand(user_id, image_bytes):
-    """Salva il brand dell'utente su file"""
+    """Salva il brand dell'utente su file + Gist (persistente)"""
     try:
         brand_path = get_user_brand_path(user_id)
         with open(brand_path, 'wb') as f:
             f.write(image_bytes)
         logger.info(f"✅ Brand salvato su file per utente {user_id}: {brand_path}")
+        # Salva anche su Gist in background
+        import threading
+        threading.Thread(target=save_user_brand_to_gist, args=(user_id, image_bytes), daemon=True).start()
         return True
     except Exception as e:
         logger.error(f"❌ Errore salvataggio brand: {e}")
         return False
 
+def save_user_brand_to_gist(user_id, image_bytes):
+    """Salva il brand dell'utente nel Gist come base64 (sopravvive ai riavvii)."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    gist_id = os.getenv('GIST_ID', '')
+    if not github_token or not gist_id:
+        return
+    try:
+        import base64 as _b64
+        content = _b64.b64encode(image_bytes).decode()
+        filename = f"user_brand_{user_id}.b64"
+        r = httpx.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
+            json={"files": {filename: {"content": content}}},
+            timeout=15
+        )
+        if r.status_code == 200:
+            logger.info(f"✅ [Gist] Brand utente {user_id} salvato su Gist")
+        else:
+            logger.warning(f"⚠️ [Gist] Errore salvataggio brand: {r.status_code}")
+    except Exception as e:
+        logger.warning(f"⚠️ [Gist] Eccezione salvataggio brand: {e}")
+
+def load_user_brand_from_gist(user_id):
+    """Scarica il brand dal Gist se presente."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    gist_id = os.getenv('GIST_ID', '')
+    if not github_token or not gist_id:
+        return None
+    try:
+        import base64 as _b64
+        filename = f"user_brand_{user_id}.b64"
+        r = httpx.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            content = r.json().get('files', {}).get(filename, {}).get('content', '')
+            if content:
+                logger.info(f"✅ [Gist] Brand utente {user_id} recuperato da Gist")
+                return _b64.b64decode(content)
+    except Exception as e:
+        logger.warning(f"⚠️ [Gist] Eccezione lettura brand: {e}")
+    return None
+
 def load_user_brand(user_id):
-    """Carica il brand dell'utente dal file se esiste"""
+    """Carica il brand dell'utente dal file; se assente lo recupera dal Gist."""
     try:
         brand_path = get_user_brand_path(user_id)
         if os.path.exists(brand_path):
@@ -133,7 +182,19 @@ def load_user_brand(user_id):
             logger.info(f"✅ Brand caricato da file per utente {user_id}")
             return brand_bytes
     except Exception as e:
-        logger.error(f"❌ Errore caricamento brand: {e}")
+        logger.error(f"❌ Errore caricamento brand da file: {e}")
+    # Fallback: prova dal Gist (sopravvive ai riavvii Render)
+    brand_bytes = load_user_brand_from_gist(user_id)
+    if brand_bytes:
+        # Salva su file locale per i prossimi accessi
+        try:
+            brand_path = get_user_brand_path(user_id)
+            with open(brand_path, 'wb') as f:
+                f.write(brand_bytes)
+            logger.info(f"✅ Brand ripristinato da Gist su file per utente {user_id}")
+        except Exception:
+            pass
+        return brand_bytes
     return None
 
 def delete_user_brand(user_id):
