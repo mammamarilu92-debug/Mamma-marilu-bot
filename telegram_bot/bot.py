@@ -1504,39 +1504,24 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not final_caption:
             final_caption = "✨"
         
-        # Genera video 2s in-memory e invia
+        # Invia direttamente il JPEG originale: niente ricodifica video,
+        # così Telegram riceve la grafica alla massima nitidezza disponibile.
         import gc
         try:
             jpeg_bytes = output_buffer.getvalue()
             output_buffer.close()
             gc.collect()
 
-            logger.info("🎬 Generando video 2s in-memory (pipe ffmpeg)...")
-            video_bytes = await loop.run_in_executor(
-                thread_pool, create_video_bytes_from_jpeg, jpeg_bytes
+            photo_buf = BytesIO(jpeg_bytes)
+            photo_buf.name = 'offerta.jpg'
+            photo_buf.seek(0)
+            logger.info(f"🖼️ Invio immagine JPEG ({len(jpeg_bytes)//1024}KB) a Telegram...")
+            await msg.reply_photo(
+                photo=photo_buf,
+                caption=final_caption,
+                parse_mode="HTML",
             )
-            gc.collect()
-
-            if video_bytes:
-                video_buf = BytesIO(video_bytes)
-                video_buf.name = 'video.mp4'
-                logger.info(f"📹 Inviando video ({len(video_bytes)//1024}KB) a Telegram...")
-                await msg.reply_video(
-                    video=video_buf,
-                    caption=final_caption,
-                    parse_mode="HTML",
-                    width=1080,
-                    height=1920,
-                    duration=2,
-                    supports_streaming=True,
-                )
-                logger.info("✅✅✅ VIDEO INVIATO CON SUCCESSO! ✅✅✅")
-            else:
-                logger.warning("⚠️ Video fallito — invio foto come fallback")
-                photo_buf = BytesIO(jpeg_bytes)
-                photo_buf.seek(0)
-                await msg.reply_photo(photo=photo_buf, caption=final_caption, parse_mode="HTML")
-                logger.info("✅ Foto inviata (fallback)")
+            logger.info("✅✅✅ IMMAGINE INVIATA CON SUCCESSO! ✅✅✅")
         except Exception as e:
             logger.error(f"❌ ERRORE INVIO: {e}")
             return
