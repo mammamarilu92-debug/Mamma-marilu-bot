@@ -1168,9 +1168,61 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 client = get_http_client()
                 resp = await client.get(url)
-                if resp.status_code == 200:
+                if resp.status_code == 200 and resp.content:
                     offer_bytes = resp.content
                     logger.info(f"✅ Scaricato: {len(offer_bytes)} bytes")
+                else:
+                    logger.warning(
+                        f"⚠️ Preview immagine vuota ({resp.status_code}, "
+                        f"{len(resp.content)} bytes) — provo immagine Amazon"
+                    )
+
+                    # Alcuni link preview di PremiumTools restano validi
+                    # come URL ma restituiscono un body vuoto. In quel caso
+                    # recupera l'immagine dalla pagina Amazon del post.
+                    amazon_url = extract_amazon_link(offer_text)
+                    if amazon_url:
+                        page_headers = {
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 Chrome/125.0 Safari/537.36"
+                            ),
+                            "Accept": "text/html,application/xhtml+xml",
+                            "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+                        }
+                        async with httpx.AsyncClient(
+                            timeout=20, follow_redirects=True, headers=page_headers
+                        ) as fallback_client:
+                            page = await fallback_client.get(amazon_url)
+                            html = page.text if page.status_code == 200 else ""
+                            image_candidates = []
+
+                            # Prima prova i meta tag social, poi i campi
+                            # immagine presenti nel JSON della pagina Amazon.
+                            for pattern in (
+                                r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+                                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+                                r'"(?:hiRes|largeImage|baseImage)":\s*"([^"]+)"',
+                            ):
+                                image_candidates.extend(re.findall(pattern, html, re.I))
+
+                            for image_url in image_candidates:
+                                image_url = (
+                                    image_url.replace("\\u002F", "/")
+                                    .replace("\\/", "/")
+                                    .replace("&amp;", "&")
+                                )
+                                try:
+                                    image_resp = await fallback_client.get(image_url)
+                                    if image_resp.status_code == 200 and image_resp.content:
+                                        offer_bytes = image_resp.content
+                                        logger.info(
+                                            f"✅ Immagine Amazon recuperata: "
+                                            f"{len(offer_bytes)} bytes"
+                                        )
+                                        break
+                                except Exception:
+                                    continue
             except Exception as e:
                 logger.error(f"❌ Errore download: {e}")
     except Exception as e:
@@ -1179,6 +1231,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 3. Se non c'è niente, rifiuta
     if not offer_bytes:
         logger.info(f"⚠️ Nessuna immagine trovata")
+        try:
+            await msg.reply_text(
+                "❌ Non riesco a scaricare l'immagine del prodotto. "
+                "Riprova tra poco o inviami direttamente la foto."
+            )
+        except Exception:
+            pass
         return
     
     logger.info(f"✅ Ho l'immagine! Inizio elaborazione...")
