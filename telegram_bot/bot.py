@@ -112,19 +112,97 @@ def get_user_brand_path(user_id):
     return os.path.join(USER_BRANDS_DIR, f"brand_{user_id}.png")
 
 def save_user_brand(user_id, image_bytes):
-    """Salva il brand dell'utente su file + Gist (persistente)"""
+    """Salva il brand dell'utente su file + repository persistente."""
     try:
         brand_path = get_user_brand_path(user_id)
         with open(brand_path, 'wb') as f:
             f.write(image_bytes)
         logger.info(f"✅ Brand salvato su file per utente {user_id}: {brand_path}")
-        # Salva anche su Gist in background
+        # Salva anche fuori dal container in background.
         import threading
-        threading.Thread(target=save_user_brand_to_gist, args=(user_id, image_bytes), daemon=True).start()
+        threading.Thread(target=save_user_brand_to_repo, args=(user_id, image_bytes), daemon=True).start()
         return True
     except Exception as e:
         logger.error(f"❌ Errore salvataggio brand: {e}")
         return False
+
+GITHUB_REPO = os.getenv('GITHUB_REPO', 'mammamarilu92-debug/Mamma-marilu-bot')
+GITHUB_BRAND_DIR = 'telegram_bot/user_brands'
+
+def save_user_brand_to_repo(user_id, image_bytes):
+    """Salva il brand nel repository, così sopravvive a ogni deploy Render."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    if not github_token:
+        logger.warning("⚠️ [Brand] GITHUB_TOKEN non configurato: brand solo locale")
+        return
+    try:
+        import base64 as _b64
+        import urllib.request as _urlreq
+        import urllib.error as _urlerr
+        filename = f"{GITHUB_BRAND_DIR}/brand_{user_id}.png"
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        sha = None
+        try:
+            request = _urlreq.Request(api_url, headers=headers)
+            with _urlreq.urlopen(request, timeout=15) as response:
+                sha = json.loads(response.read()).get("sha")
+        except _urlerr.HTTPError as error:
+            if error.code != 404:
+                raise
+
+        payload = {
+            "message": f"Aggiorna brand utente {user_id}",
+            "content": _b64.b64encode(image_bytes).decode(),
+        }
+        if sha:
+            payload["sha"] = sha
+        request = _urlreq.Request(
+            api_url,
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="PUT",
+        )
+        with _urlreq.urlopen(request, timeout=30) as response:
+            if response.status in (200, 201):
+                logger.info(f"✅ [Brand] Brand utente {user_id} salvato nel repository")
+            else:
+                logger.warning(f"⚠️ [Brand] Salvataggio repository: HTTP {response.status}")
+    except Exception as e:
+        logger.warning(f"⚠️ [Brand] Errore salvataggio repository: {e}")
+
+def load_user_brand_from_repo(user_id):
+    """Recupera il brand dal repository dopo un deploy o riavvio."""
+    github_token = os.getenv('GITHUB_TOKEN', '')
+    if not github_token:
+        return None
+    try:
+        import base64 as _b64
+        import urllib.request as _urlreq
+        filename = f"{GITHUB_BRAND_DIR}/brand_{user_id}.png"
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+        request = _urlreq.Request(
+            api_url,
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        with _urlreq.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read())
+        encoded = data.get("content", "").replace("\n", "")
+        if encoded:
+            logger.info(f"✅ [Brand] Brand utente {user_id} recuperato dal repository")
+            return _b64.b64decode(encoded)
+    except Exception as e:
+        logger.warning(f"⚠️ [Brand] Errore lettura repository: {e}")
+    return None
 
 def save_user_brand_to_gist(user_id, image_bytes):
     """Salva il brand dell'utente nel Gist come base64 (sopravvive ai riavvii)."""
@@ -183,8 +261,11 @@ def load_user_brand(user_id):
             return brand_bytes
     except Exception as e:
         logger.error(f"❌ Errore caricamento brand da file: {e}")
-    # Fallback: prova dal Gist (sopravvive ai riavvii Render)
-    brand_bytes = load_user_brand_from_gist(user_id)
+    # Fallback persistente: repository del bot.
+    brand_bytes = load_user_brand_from_repo(user_id)
+    if not brand_bytes:
+        # Compatibilità con eventuali brand già presenti nel vecchio Gist.
+        brand_bytes = load_user_brand_from_gist(user_id)
     if brand_bytes:
         # Salva su file locale per i prossimi accessi
         try:
@@ -461,6 +542,7 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
 
     NERO   = (12, 12, 12)
     GRIGIO = (68, 68, 68)    # #444 — grigio scuro, leggibile
+    BIANCO = (255, 255, 255)
     ROSSO  = (225, 38, 28)   # #E1261C
 
     pct_clean = (percentage.lstrip('-') if percentage else "").strip()
@@ -473,18 +555,21 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
         # Prodotto costoso: solo "SCONTO X%" grande in rosso — crea curiosità
         label_text    = "SCONTO"
         price_text    = pct_clean          # es. "50%" — usa il font grande, colore rosso
+        label_color   = GRIGIO
         price_color   = ROSSO
         show_discount = False
     elif price:
         # Prodotto economico (o senza %): SOLO/OGGI A + prezzo + eventuale sconto
         label_text    = random.choice(["SOLO", "OGGI A"])
         price_text    = format_price_euro_first(price)
-        price_color   = NERO
+        label_color   = BIANCO
+        price_color   = BIANCO
         show_discount = bool(pct_clean)
     else:
         # Solo percentuale disponibile
         label_text    = "SCONTATO DEL"
         price_text    = pct_clean
+        label_color   = GRIGIO
         price_color   = ROSSO
         show_discount = False
 
@@ -508,15 +593,25 @@ def draw_price_overlay(image: Image.Image, price: str, savings: str, percentage:
     else:
         y = 40
 
-    # Label piccolo, grigio
+    # Label piccolo; "SOLO"/"OGGI A" bianco con bordo scuro per restare leggibile.
     bb = draw.textbbox((0, 0), label_text, font=font_label)
-    draw.text((center_x - (bb[2] - bb[0]) // 2, y), label_text, font=font_label, fill=GRIGIO)
+    draw.text(
+        (center_x - (bb[2] - bb[0]) // 2, y), label_text,
+        font=font_label, fill=label_color,
+        stroke_width=2 if label_color == BIANCO else 0,
+        stroke_fill=GRIGIO,
+    )
     y += lh + GAP_LBL
 
-    # Prezzo grande
+    # Prezzo grande; prezzo bianco con bordo scuro per contrasto.
     if price_text:
         bb = draw.textbbox((0, 0), price_text, font=font_price)
-        draw.text((center_x - (bb[2] - bb[0]) // 2, y), price_text, font=font_price, fill=price_color)
+        draw.text(
+            (center_x - (bb[2] - bb[0]) // 2, y), price_text,
+            font=font_price, fill=price_color,
+            stroke_width=3 if price_color == BIANCO else 0,
+            stroke_fill=GRIGIO,
+        )
         y += ph + GAP_DISC
 
     # Sconto tutto in rosso acceso #E1261C
